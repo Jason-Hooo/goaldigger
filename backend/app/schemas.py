@@ -1,9 +1,6 @@
-# 檔案：backend/app/schemas.py
-
 from pydantic import BaseModel, Field, EmailStr
 from typing import Optional
 from datetime import date, datetime
-from pydantic import BaseModel
 from typing import List, Dict
 
 class UserCreate(BaseModel):
@@ -61,3 +58,31 @@ class MonthlyReport(BaseModel):
     month: str
     total_spent: float
     breakdown: List[ExpenseSummary]
+
+class LedgerCreate(BaseModel):
+    user_id: int
+    type_id: int
+    amount: float = Field(..., gt=0)
+    description: Optional[str] = None
+    goal_id: Optional[int] = None
+
+
+class LedgerResponse(BaseModel):
+    consumption_id: int
+    user_id: int
+    type_id: int
+    amount: float
+    description: Optional[str] = None  # 💡 補上了 = None，完美防呆！
+    created_at: datetime
+
+    class Config:
+        from_attributes = True  # 💡 補上這個，這樣 ledger.py 的 cursor.fetchone() 才能完美轉換成 Pydantic 物件！
+
+
+class GoalAchieveResponse(BaseModel):
+    goal_id: int
+    completion_date: datetime
+
+class TokenUpdate(BaseModel):
+    user_id: int
+    fcm_token: str
