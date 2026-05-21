@@ -73,3 +73,12 @@ class SplitExpenseOut(SplitExpenseBase):
 
     id: str
     created_at: datetime | None = None
+
+class SplitOverviewOut(BaseModel):
+    """Split group overview specifically formatted for frontend SplitTile."""
+    group_id: str
+    title: str
+    subtitle: str
+    amount: str          
+    net_balance: float   
+    icon_type: str       
