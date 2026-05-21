@@ -1,5 +1,8 @@
 fastapi
-uvicorn
-pydantic
-supabase
-python-dotenv
+uvicorn[standard]
+psycopg2-binary
+pydantic[email]
+passlib[bcrypt]
+email-validator
+firebase-admin
+scheduler

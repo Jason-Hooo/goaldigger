@@ -1,35 +1,17 @@
-"""Supabase client helpers."""
+# 檔案：backend/app/database.py
 
-from functools import lru_cache
-from typing import Any
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from config import get_settings  
 
-from fastapi import HTTPException
-from supabase import Client, create_client
+# 2. 向秘書索取設定資訊
+settings = get_settings()
+DB_URL = settings.db_url  # 讓 Pydantic 去 .env 撈出 DB_URL
 
-from .config import get_settings
-
-
-@lru_cache
-def get_auth_client() -> Client:
-	"""Return a Supabase client for auth lookups."""
-
-	settings = get_settings()
-	return create_client(settings.supabase_url, settings.supabase_anon_key)
-
-
-@lru_cache
-def get_data_client() -> Client:
-	"""Return a Supabase client for data operations."""
-
-	settings = get_settings()
-	key = settings.supabase_service_role_key or settings.supabase_anon_key
-	return create_client(settings.supabase_url, key)
-
-
-def unwrap_response(response: Any, message: str) -> Any:
-	"""Return response data or raise an HTTPException on errors."""
-
-	error = getattr(response, "error", None)
-	if error:
-		raise HTTPException(status_code=400, detail=f"{message}: {error}")
-	return getattr(response, "data", None)
+# 3. 獲取資料庫連線的函數
+def get_db_connection():
+    conn = psycopg2.connect(DB_URL, cursor_factory=RealDictCursor)
+    try:
+        yield conn
+    finally:
+        conn.close()  

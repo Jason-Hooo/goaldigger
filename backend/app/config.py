@@ -9,11 +9,7 @@ class Settings(BaseSettings):
 	"""Typed settings loaded from environment variables."""
 
 	supabase_url: str = Field(..., env="SUPABASE_URL")
-	supabase_anon_key: str = Field(..., env="SUPABASE_ANON_KEY")
-	supabase_service_role_key: str | None = Field(
-		default=None,
-		env="SUPABASE_SERVICE_ROLE_KEY",
-	)
+	db_url: str = Field(..., env="DB_URL")
 	environment: str = Field(default="development", env="ENVIRONMENT")
 
 	class Config:
