@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 from passlib.context import CryptContext
-from schemas import UserCreate, UserLogin, UserResponse, TokenUpdate # 👈 幫你整併在一行了
+from schemas import UserCreate, UserLogin, UserResponse, TokenUpdate 
 from database import get_db_connection
 
 # 建立密碼加密工具 (使用 bcrypt 演算法)
