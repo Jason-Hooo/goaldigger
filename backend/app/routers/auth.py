@@ -1,58 +1,105 @@
-"""Auth router and dependencies."""
 
-from typing import Any, Annotated
+from fastapi import APIRouter, Depends, HTTPException
+from psycopg2.extras import RealDictCursor
+from passlib.context import CryptContext
+from schemas import UserCreate, UserLogin, UserResponse, TokenUpdate 
+from database import get_db_connection
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+# 建立密碼加密工具 (使用 bcrypt 演算法)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-from ..database import get_auth_client
-from ..schemas.auth import AuthUser
+# 建立會員部 Router
+router = APIRouter(prefix="/auth", tags=["會員管理"])
 
-router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-def _extract_bearer_token(authorization: str | None) -> str:
-    """Extract a bearer token from an Authorization header."""
-
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-    parts = authorization.split()
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Invalid Authorization header")
-    return parts[1]
-
-
-def _extract_user_payload(user_response: Any) -> tuple[str, str | None]:
-    """Extract user id and email from a Supabase user response."""
-
-    if hasattr(user_response, "user") and getattr(user_response, "user"):
-        user = user_response.user
-        return getattr(user, "id"), getattr(user, "email", None)
-    if isinstance(user_response, dict):
-        user = user_response.get("user") or user_response
-        user_id = user.get("id") if isinstance(user, dict) else None
-        email = user.get("email") if isinstance(user, dict) else None
-        if user_id:
-            return user_id, email
-    raise HTTPException(status_code=401, detail="Invalid user response")
-
-
-def get_current_user(
-    authorization: Annotated[str | None, Header()] = None,
-) -> AuthUser:
-    """Validate Supabase JWT and return the current user."""
-
-    token = _extract_bearer_token(authorization)
-    client = get_auth_client()
+# 1️ 註冊 API
+@router.post("/register", response_model=dict)
+def register_user(user_data: UserCreate, conn = Depends(get_db_connection)):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        user_response = client.auth.get_user(token)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}") from exc
-    user_id, email = _extract_user_payload(user_response)
-    return AuthUser(id=user_id, email=email)
+        # 先把前端傳來的明碼密碼加密
+        hashed_password = pwd_context.hash(user_data.password)
+        
+        # 寫入資料庫
+        sql_query = """
+            INSERT INTO users (name, email, password)
+            VALUES (%s, %s, %s)
+            RETURNING user_id, name, email, created_at;
+        """
+        cursor.execute(sql_query, (user_data.name, user_data.email, hashed_password))
+        new_user = cursor.fetchone()
+        conn.commit()
+
+        return {
+            "status": "success",
+            "message": "註冊成功！",
+            "data": new_user
+        }
+
+    except Exception as e:
+        conn.rollback()
+        # 如果信箱已經存在，PostgreSQL 會報錯 (設 UNIQUE)，會在這裡攔截
+        if "unique constraint" in str(e).lower():
+            raise HTTPException(status_code=400, detail="這個 Email 已經被註冊過囉！")
+        raise HTTPException(status_code=400, detail=f"註冊失敗：{str(e)}")
+
+    finally:
+        cursor.close()
 
 
-@router.get("/me", response_model=AuthUser)
-def read_me(current_user: AuthUser = Depends(get_current_user)) -> AuthUser:
-    """Return the current authenticated user."""
+# 2️ 登入 API
+@router.post("/login")
+def login_user(user_data: UserLogin, conn = Depends(get_db_connection)):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # 去資料庫找這個 email
+        cursor.execute("SELECT * FROM users WHERE email = %s;", (user_data.email,))
+        user = cursor.fetchone()
 
-    return current_user
+        # 檢查 1：找不到人
+        if not user:
+            raise HTTPException(status_code=401, detail="信箱或密碼錯誤")
+
+        # 檢查 2：密碼比對
+        if not pwd_context.verify(user_data.password, user["password"]):
+            raise HTTPException(status_code=401, detail="信箱或密碼錯誤")
+
+        # 登入成功，回傳資料 (把密碼從字典裡刪除再回傳，保護安全)
+        del user["password"]
+        return {
+            "status": "success",
+            "message": f"歡迎回來，{user['name']}！",
+            "data": user
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"登入過程發生錯誤：{str(e)}")
+        
+    finally:
+        cursor.close()
+
+
+# 3️ 更新推播金鑰 (FCM Token) API
+@router.put("/fcm-token")
+def update_fcm_token(token_data: TokenUpdate, conn = Depends(get_db_connection)):
+    cursor = conn.cursor()
+    try:
+        # 更新該使用者的 fcm_token
+        sql_query = """
+            UPDATE users 
+            SET fcm_token = %s 
+            WHERE user_id = %s;
+        """
+        cursor.execute(sql_query, (token_data.fcm_token, token_data.user_id))
+        conn.commit()
+
+        # 如果 rowcount 是 0，代表資料庫裡沒有這個 user_id
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="找不到此使用者")
+
+        return {"status": "success", "message": "手機推播金鑰綁定成功！"}
+        
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=f"金鑰綁定失敗：{str(e)}")
+    finally:
+        cursor.close()
