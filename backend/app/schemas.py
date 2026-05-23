@@ -86,3 +86,18 @@ class GoalAchieveResponse(BaseModel):
 class TokenUpdate(BaseModel):
     user_id: int
     fcm_token: str
+
+class GroupCreate(BaseModel):
+    group_name: str
+    user_ids: List[int]  # 參與此群組的使用者 ID 列表
+
+class SplitDetail(BaseModel):
+    user_id: int
+    shared_amount: float
+
+class ExpenseCreate(BaseModel):
+    group_id: int
+    name: str
+    amount: float
+    payer_id: int  # 誰先代墊的
+    split_details: List[SplitDetail]  # 大家平分的明細
