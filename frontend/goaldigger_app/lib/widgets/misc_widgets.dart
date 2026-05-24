@@ -37,52 +37,7 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(title, style: Theme.of(context).textTheme.titleLarge),
-        Text(
-              '示範',
-          style: Theme.of(
-            context,
-          ).textTheme.labelLarge?.copyWith(color: AppColors.pinkPrimary),
-        ),
-      ],
-    );
-  }
-}
-
-class _ChecklistCard extends StatelessWidget {
-  const _ChecklistCard({required this.items});
-
-  final List<String> items;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: items
-              .map(
-                (item) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.check_circle,
-                        color: AppColors.pinkPrimary,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(child: Text(item)),
-                    ],
-                  ),
-                ),
-              )
-              .toList(),
-        ),
-      ),
-    );
+    return Text(title, style: Theme.of(context).textTheme.titleLarge);
   }
 }
 
@@ -105,10 +60,7 @@ class _BalanceCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '本月結餘',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+            Text('本月結餘', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
             Text(
               '\$${balance.toStringAsFixed(2)}',
@@ -117,11 +69,7 @@ class _BalanceCard extends StatelessWidget {
             const SizedBox(height: 16),
             Row(
               children: [
-                _StatChip(
-                  label: '收入',
-                  value: income,
-                  color: AppColors.green,
-                ),
+                _StatChip(label: '收入', value: income, color: AppColors.green),
                 const SizedBox(width: 12),
                 _StatChip(
                   label: '支出',
@@ -154,7 +102,7 @@ class _StatChip extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.12),
+          color: color.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(16),
         ),
         child: Column(
@@ -170,15 +118,17 @@ class _StatChip extends StatelessWidget {
 }
 
 class LedgerTile extends StatelessWidget {
-  const LedgerTile({super.key, required this.item});
+  const LedgerTile({super.key, required this.item, this.onTap});
 
   final LedgerItem item;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
+        onTap: onTap,
         leading: CircleAvatar(
           backgroundColor: AppColors.pinkSoft,
           child: Icon(item.icon, color: AppColors.pinkPrimary),
@@ -198,42 +148,106 @@ class LedgerTile extends StatelessWidget {
 }
 
 class GoalTile extends StatelessWidget {
-  const GoalTile({super.key, required this.item});
+  const GoalTile({super.key, required this.item, this.onTap});
 
   final GoalItem item;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(item.title, style: Theme.of(context).textTheme.titleLarge),
-                Text('${(item.progress * 100).toStringAsFixed(0)}%'),
-              ],
-            ),
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: LinearProgressIndicator(
-                value: item.progress,
-                minHeight: 10,
-                backgroundColor: AppColors.pinkSoft,
-                valueColor: const AlwaysStoppedAnimation(AppColors.pinkPrimary),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.title,
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          item.description,
+                          style: const TextStyle(color: AppColors.inkLight),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        item.progressLabel,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.pinkPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        item.deadlineLabel,
+                        style: const TextStyle(color: AppColors.inkLight),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              item.subtitle,
-              style: const TextStyle(color: AppColors.inkLight),
-            ),
-          ],
+              const SizedBox(height: 14),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: LinearProgressIndicator(
+                  value: item.progress,
+                  minHeight: 10,
+                  backgroundColor: AppColors.pinkSoft,
+                  valueColor: const AlwaysStoppedAnimation(
+                    AppColors.pinkPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Text('已存 ${item.savedAmountLabel}'),
+                  const Spacer(),
+                  Text('目標 ${item.targetAmountLabel}'),
+                  const SizedBox(width: 12),
+                  Text('還差 ${item.remainingAmountLabel}'),
+                ],
+              ),
+              if (item.isAchieved) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.green.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Text(
+                    '已達成',
+                    style: TextStyle(
+                      color: AppColors.green,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -241,24 +255,29 @@ class GoalTile extends StatelessWidget {
 }
 
 class SplitTile extends StatelessWidget {
-  const SplitTile({super.key, required this.item});
+  const SplitTile({super.key, required this.item, this.onTap});
 
   final SplitItem item;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: AppColors.pinkSoft,
-          child: Icon(item.icon, color: AppColors.pinkPrimary),
-        ),
-        title: Text(item.title),
-        subtitle: Text(item.subtitle),
-        trailing: Text(
-          item.amount,
-          style: const TextStyle(fontWeight: FontWeight.w700),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: ListTile(
+          leading: CircleAvatar(
+            backgroundColor: AppColors.pinkSoft,
+            child: Icon(item.icon, color: AppColors.pinkPrimary),
+          ),
+          title: Text(item.title),
+          subtitle: Text(item.subtitle),
+          trailing: Text(
+            item.amount,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
         ),
       ),
     );

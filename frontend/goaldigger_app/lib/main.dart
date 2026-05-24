@@ -17,7 +17,6 @@ part 'views/stats_view.dart';
 part 'views/split_view.dart';
 part 'widgets/background_widgets.dart';
 part 'widgets/page_scaffold.dart';
-part 'widgets/hero_card.dart';
 part 'widgets/misc_widgets.dart';
 
 void main() {
