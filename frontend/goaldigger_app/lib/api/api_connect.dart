@@ -36,8 +36,11 @@ final response = await http.post(
     }
     else
     {
-      token = data['token'];
-      print('Login successful, token: $token');
+      // 登入成功後呼叫
+      if (data['status'] == 'ok') {
+        await saveToken(data['token']);  // 存起來
+      }
+      print('Login successful, token: ${data['token']}');
       return 'ok';
     }
     //拿到後端丟過來的資料
@@ -46,5 +49,9 @@ final response = await http.post(
   return 'Login failed with status code: ${response.statusCode}';
 }
 
+Future<void> saveToken(String token) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('token', token);
+}
 
 }
