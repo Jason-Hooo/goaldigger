@@ -13,7 +13,6 @@ try:
     firebase_admin.initialize_app(cred)
 except Exception as e:
    print(f"Firebase 初始化失敗 : {e}")
-
 # 掛載部門 Router
 app.include_router(auth.router) 
 app.include_router(goals.router)  
