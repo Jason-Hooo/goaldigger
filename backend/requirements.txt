@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+psycopg2-binary
+pydantic[email]
+passlib[bcrypt]
+email-validator
+firebase-admin
+scheduler
+apscheduler
