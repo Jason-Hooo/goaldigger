@@ -2,6 +2,9 @@
 
 """
 
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
 CREATE TABLE public.achievements (
   goal_id integer NOT NULL,
   completion_date timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
@@ -23,6 +26,7 @@ CREATE TABLE public.expense_types (
   type_id integer NOT NULL DEFAULT nextval('expense_types_type_id_seq'::regclass),
   type_name character varying NOT NULL,
   image_path character varying,
+  is_expense boolean DEFAULT true,
   CONSTRAINT expense_types_pkey PRIMARY KEY (type_id)
 );
 CREATE TABLE public.fixed_money_flow (
@@ -83,9 +87,11 @@ CREATE TABLE public.personal_consumptions (
   amount numeric NOT NULL,
   description character varying,
   created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+  goal_id integer,
   CONSTRAINT personal_consumptions_pkey PRIMARY KEY (consumption_id),
   CONSTRAINT personal_consumptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id),
-  CONSTRAINT personal_consumptions_type_id_fkey FOREIGN KEY (type_id) REFERENCES public.expense_types(type_id)
+  CONSTRAINT personal_consumptions_type_id_fkey FOREIGN KEY (type_id) REFERENCES public.expense_types(type_id),
+  CONSTRAINT fk_personal_consumptions_goal FOREIGN KEY (goal_id) REFERENCES public.goals(goal_id)
 );
 CREATE TABLE public.users (
   user_id integer NOT NULL DEFAULT nextval('users_user_id_seq'::regclass),
@@ -93,6 +99,7 @@ CREATE TABLE public.users (
   email character varying NOT NULL UNIQUE,
   created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
   fcm_token character varying,
+  password character varying,
   CONSTRAINT users_pkey PRIMARY KEY (user_id)
 );
 """

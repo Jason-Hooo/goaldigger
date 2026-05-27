@@ -1,26 +1,19 @@
 """Application configuration and environment settings."""
 
 from functools import lru_cache
-
-from pydantic import BaseSettings, Field
-
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-	"""Typed settings loaded from environment variables."""
+    """Typed settings loaded from environment variables."""
+    
+    supabase_url: str
+    db_url: str
+    environment: str = "development"
 
-	supabase_url: str = Field(..., env="SUPABASE_URL")
-	db_url: str = Field(..., env="DB_URL")
-	environment: str = Field(default="development", env="ENVIRONMENT")
-
-	class Config:
-		"""Pydantic settings configuration."""
-
-		env_file = ".env"
-		case_sensitive = True
-
+    # 💡 只有這裡要改：加上 ../ 告訴系統去上一層找密碼檔
+    model_config = SettingsConfigDict(env_file="../.env", extra="ignore")
 
 @lru_cache
 def get_settings() -> Settings:
-	"""Return cached application settings."""
-
-	return Settings()
+    """Return cached application settings."""
+    return Settings()

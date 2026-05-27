@@ -1,9 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Dict
 from pydantic import BaseModel
-from ..database import get_db_connection
+from database import get_db_connection
 from psycopg2.extras import RealDictCursor
-from ..schemas import GroupCreate, ExpenseCreate
+from schemas import GroupCreate, ExpenseCreate
 
 router = APIRouter(prefix="/splits", tags=["分帳管理"])
 
@@ -61,6 +61,7 @@ def add_expense(expense: ExpenseCreate, conn=Depends(get_db_connection)):
             (expense.group_id, expense.name, expense.amount)
         )
         consumption_id = cursor.fetchone()['consumption_id']
+        personal_records = []
 
         # 2. 寫入參與者分帳明細
         for detail in expense.split_details:
@@ -73,6 +74,54 @@ def add_expense(expense: ExpenseCreate, conn=Depends(get_db_connection)):
                 VALUES (%s, %s, %s, %s, %s);
                 """,
                 (consumption_id, detail.user_id, is_payer, 1, detail.shared_amount)
+            )
+            
+            if detail.shared_amount > 0:
+                personal_records.append((
+                    detail.user_id, 
+                    99,  # 預設的 type_id，代表「群組分帳」類別 (需確保資料庫裡有這個 type_id)
+                    detail.shared_amount, 
+                    f"{expense.name} (群組分帳)"
+                ))
+                
+                cursor.execute("""
+                    SELECT daily_usable_amount FROM monthly_financial_info 
+                    WHERE user_id = %s AND record_month = TO_CHAR(CURRENT_DATE, 'YYYY-MM');
+                """, (detail.user_id,))
+                budget_row = cursor.fetchone()
+                daily_limit = budget_row['daily_usable_amount'] if budget_row else 0
+
+                # B. 取得該成員今日已花費總額 (不含這筆)
+                cursor.execute("""
+                    SELECT COALESCE(SUM(amount), 0) as total_spent FROM personal_consumptions 
+                    WHERE user_id = %s AND created_at::date = CURRENT_DATE;
+                """, (detail.user_id,))
+                today_spent = cursor.fetchone()['total_spent']
+
+                # C. 計算是否超支
+                remaining_budget = float(daily_limit) - float(today_spent)
+                if detail.shared_amount > remaining_budget:
+                    # 算出超出了多少錢
+                    excess_amount = float(detail.shared_amount) - max(0, remaining_budget)
+                    
+                    # D. 找出他的「活躍目標」並扣除進度 (使用 GREATEST 確保扣完最少是 0，不會變負債)
+                    cursor.execute("""
+                        UPDATE goals 
+                        SET cumulative_amount = cumulative_amount - %s
+                        WHERE user_id = %s 
+                          AND goal_id NOT IN (SELECT goal_id FROM achievements)
+                    """, (excess_amount, detail.user_id))
+                    print(f"[系統日誌] 成員 {detail.user_id} 群組分帳超支！從活躍目標扣除了 {excess_amount} 元")
+
+        # 3. 💡 批次將分帳結果同步到每個人的 personal_consumptions
+        if personal_records:
+            cursor.executemany(
+                """
+                INSERT INTO personal_consumptions 
+                (user_id, type_id, amount, description, created_at)
+                VALUES (%s, %s, %s, %s, NOW());
+                """,
+                personal_records
             )
         
         conn.commit()

@@ -13,7 +13,7 @@ class UserLogin(BaseModel):
     email: EmailStr = Field(..., example="ming@nccu.edu.tw")
     password: str = Field(...)
 
-# 回傳給前端的會員資料 (⚠️ 絕對不可以包含密碼)
+# 回傳給前端的會員資料 (不可以包含密碼)
 class UserResponse(BaseModel):
     user_id: int
     name: str
@@ -24,7 +24,7 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
-# 1️⃣ 這是前端 (Flutter) 傳來「新增目標」時，必須符合的格式
+#  這是前端 (Flutter) 傳來「新增目標」時，必須符合的格式
 class GoalCreate(BaseModel):
     user_id: int = Field(..., description="誰的目標 (請先確保 users 表裡有這個人)")
     goal_name: str = Field(..., example="買一台 PS5")
@@ -36,7 +36,7 @@ class GoalCreate(BaseModel):
     image_path: Optional[str] = None
     
 
-# 2️⃣ 這是後端要把「完整的目標資料」回傳給前端時的格式
+# 這是後端要把「完整的目標資料」回傳給前端時的格式
 class GoalResponse(BaseModel):
     goal_id: int
     user_id: int
@@ -72,11 +72,11 @@ class LedgerResponse(BaseModel):
     user_id: int
     type_id: int
     amount: float
-    description: Optional[str] = None  # 💡 補上了 = None，完美防呆！
+    description: Optional[str] = None  
     created_at: datetime
 
     class Config:
-        from_attributes = True  # 💡 補上這個，這樣 ledger.py 的 cursor.fetchone() 才能完美轉換成 Pydantic 物件！
+        from_attributes = True  # 
 
 
 class GoalAchieveResponse(BaseModel):
@@ -101,3 +101,15 @@ class ExpenseCreate(BaseModel):
     amount: float
     payer_id: int  # 誰先代墊的
     split_details: List[SplitDetail]  # 大家平分的明細
+    
+
+class FixedMoneyFlowItem(BaseModel):
+    category: str = Field(..., example="房租")
+    description: Optional[str] = None
+    amount: float = Field(..., gt=0, example=8000.0)
+
+class FinanceSetupCreate(BaseModel):
+    user_id: int
+    record_month: str = Field(..., example="2026-05", description="格式必須為 YYYY-MM")
+    monthly_income: float = Field(..., description="這個月的總預算或薪水")
+    fixed_flows: List[FixedMoneyFlowItem] = []

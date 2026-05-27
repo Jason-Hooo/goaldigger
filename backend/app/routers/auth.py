@@ -1,12 +1,11 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
-from passlib.context import CryptContext
+import bcrypt # 💡 這裡改用直接匯入 bcrypt
 from schemas import UserCreate, UserLogin, UserResponse, TokenUpdate 
 from database import get_db_connection
 
 # 建立密碼加密工具 (使用 bcrypt 演算法)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # 建立會員部 Router
 router = APIRouter(prefix="/auth", tags=["會員管理"])
@@ -16,10 +15,14 @@ router = APIRouter(prefix="/auth", tags=["會員管理"])
 def register_user(user_data: UserCreate, conn = Depends(get_db_connection)):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # 先把前端傳來的明碼密碼加密
-        hashed_password = pwd_context.hash(user_data.password)
+        # 強制截斷密碼到 72 字元
+        safe_password = user_data.password[:72]
         
-        # 寫入資料庫
+        # 💡 使用 bcrypt 直接進行加密
+        # 注意：bcrypt 需要 bytes 格式，所以要用 .encode('utf-8')
+        hashed_bytes = bcrypt.hashpw(safe_password.encode('utf-8'), bcrypt.gensalt())
+        hashed_password = hashed_bytes.decode('utf-8') # 轉回字串存進資料庫
+        
         sql_query = """
             INSERT INTO users (name, email, password)
             VALUES (%s, %s, %s)
@@ -28,20 +31,10 @@ def register_user(user_data: UserCreate, conn = Depends(get_db_connection)):
         cursor.execute(sql_query, (user_data.name, user_data.email, hashed_password))
         new_user = cursor.fetchone()
         conn.commit()
-
-        return {
-            "status": "success",
-            "message": "註冊成功！",
-            "data": new_user
-        }
-
+        return {"status": "success", "message": "註冊成功！", "data": new_user}
     except Exception as e:
         conn.rollback()
-        # 如果信箱已經存在，PostgreSQL 會報錯 (設 UNIQUE)，會在這裡攔截
-        if "unique constraint" in str(e).lower():
-            raise HTTPException(status_code=400, detail="這個 Email 已經被註冊過囉！")
         raise HTTPException(status_code=400, detail=f"註冊失敗：{str(e)}")
-
     finally:
         cursor.close()
 
@@ -51,29 +44,22 @@ def register_user(user_data: UserCreate, conn = Depends(get_db_connection)):
 def login_user(user_data: UserLogin, conn = Depends(get_db_connection)):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # 去資料庫找這個 email
         cursor.execute("SELECT * FROM users WHERE email = %s;", (user_data.email,))
         user = cursor.fetchone()
 
-        # 檢查 1：找不到人
         if not user:
             raise HTTPException(status_code=401, detail="信箱或密碼錯誤")
 
-        # 檢查 2：密碼比對
-        if not pwd_context.verify(user_data.password, user["password"]):
+        # 💡 使用 bcrypt 直接驗證密碼
+        # user["password"] 是從資料庫取出的雜湊值，也要轉成 bytes
+        is_valid = bcrypt.checkpw(user_data.password.encode('utf-8'), user["password"].encode('utf-8'))
+        
+        if not is_valid:
             raise HTTPException(status_code=401, detail="信箱或密碼錯誤")
 
-        # 登入成功，回傳資料 (把密碼從字典裡刪除再回傳，保護安全)
-        del user["password"]
-        return {
-            "status": "success",
-            "message": f"歡迎回來，{user['name']}！",
-            "data": user
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"登入過程發生錯誤：{str(e)}")
-        
+        user_dict = dict(user)
+        user_dict.pop("password", None)
+        return {"status": "success", "message": f"歡迎回來，{user_dict['name']}！", "data": user_dict}
     finally:
         cursor.close()
 

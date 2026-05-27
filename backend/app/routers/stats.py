@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
-from ..database import get_db_connection
+from database import get_db_connection
 from psycopg2.extras import RealDictCursor
 from typing import List
 
@@ -38,7 +38,7 @@ def get_trend_stats(user_id: int, days: int = 7, conn=Depends(get_db_connection)
             SELECT DATE(created_at) AS date, SUM(amount) AS total_amount
             FROM personal_consumptions
             WHERE user_id = %s
-              AND created_at >= CURRENT_DATE - INTERVAL '%s days'
+              AND created_at >= CURRENT_DATE - (%s * INTERVAL '1 day')
             GROUP BY DATE(created_at)
             ORDER BY date ASC;
         """
