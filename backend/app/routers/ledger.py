@@ -95,7 +95,7 @@ def delete_consumption(record_id: int, goal_id: Optional[int] = None, conn=Depen
         if goal_id:
             if is_income:
                 # 刪除收入 = 進度要扣回來
-                update_goal_query = "UPDATE goals SET cumulative_amount = GREATEST(0, cumulative_amount - %s) WHERE goal_id = %s;"
+                update_goal_query = "UPDATE goals SET cumulative_amount = 0, cumulative_amount - %s WHERE goal_id = %s;"
             else:
                 # 刪除支出 = 進度補回來
                 update_goal_query = "UPDATE goals SET cumulative_amount = cumulative_amount + %s WHERE goal_id = %s;"

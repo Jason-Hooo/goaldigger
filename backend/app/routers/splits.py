@@ -83,6 +83,35 @@ def add_expense(expense: ExpenseCreate, conn=Depends(get_db_connection)):
                     detail.shared_amount, 
                     f"{expense.name} (群組分帳)"
                 ))
+                
+                cursor.execute("""
+                    SELECT daily_usable_amount FROM monthly_financial_info 
+                    WHERE user_id = %s AND record_month = TO_CHAR(CURRENT_DATE, 'YYYY-MM');
+                """, (detail.user_id,))
+                budget_row = cursor.fetchone()
+                daily_limit = budget_row['daily_usable_amount'] if budget_row else 0
+
+                # B. 取得該成員今日已花費總額 (不含這筆)
+                cursor.execute("""
+                    SELECT COALESCE(SUM(amount), 0) as total_spent FROM personal_consumptions 
+                    WHERE user_id = %s AND created_at::date = CURRENT_DATE;
+                """, (detail.user_id,))
+                today_spent = cursor.fetchone()['total_spent']
+
+                # C. 計算是否超支
+                remaining_budget = float(daily_limit) - float(today_spent)
+                if detail.shared_amount > remaining_budget:
+                    # 算出超出了多少錢
+                    excess_amount = float(detail.shared_amount) - max(0, remaining_budget)
+                    
+                    # D. 找出他的「活躍目標」並扣除進度 (使用 GREATEST 確保扣完最少是 0，不會變負債)
+                    cursor.execute("""
+                        UPDATE goals 
+                        SET cumulative_amount = cumulative_amount - %s
+                        WHERE user_id = %s 
+                          AND goal_id NOT IN (SELECT goal_id FROM achievements)
+                    """, (excess_amount, detail.user_id))
+                    print(f"[系統日誌] 成員 {detail.user_id} 群組分帳超支！從活躍目標扣除了 {excess_amount} 元")
 
         # 3. 💡 批次將分帳結果同步到每個人的 personal_consumptions
         if personal_records:
