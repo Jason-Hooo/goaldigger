@@ -5,5 +5,4 @@ pydantic[email]
 passlib[bcrypt]
 email-validator
 firebase-admin
-scheduler
 apscheduler
