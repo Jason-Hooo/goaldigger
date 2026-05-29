@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List
-from database import get_db_connection
-from schemas import GoalCreate, GoalResponse
+from ..database import get_db_connection
+from ..schemas import GoalCreate, GoalResponse, GoalUpdate
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -90,7 +90,100 @@ def achieve_goal(goal_id: int, conn=Depends(get_db_connection)):
 def get_user_goals(user_id: int, conn=Depends(get_db_connection)):
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM goals WHERE user_id = %s ORDER BY goal_id DESC;", (user_id,))
+        cursor.execute("""
+            SELECT g.*, a.completion_date 
+            FROM goals g
+            LEFT JOIN achievements a ON g.goal_id = a.goal_id
+            WHERE g.user_id = %s 
+            ORDER BY g.goal_id DESC;
+        """, (user_id,))
         return cursor.fetchall()
+    finally:
+        cursor.close()
+
+@router.put("/{goal_id}", response_model=GoalResponse)
+def update_goal(goal_id: int, payload: GoalUpdate, conn=Depends(get_db_connection)):
+    """更新目標內容或調整進度。"""
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM goals WHERE goal_id = %s;", (goal_id,))
+        existing = cursor.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="找不到該目標")
+
+        updated_goal_name = payload.goal_name if payload.goal_name is not None else existing["goal_name"]
+        updated_description = (
+            payload.description if payload.description is not None else existing["description"]
+        )
+        updated_target_amount = (
+            payload.target_amount if payload.target_amount is not None else existing["target_amount"]
+        )
+        updated_deadline = payload.deadline if payload.deadline is not None else existing["deadline"]
+        updated_image_path = (
+            payload.image_path if payload.image_path is not None else existing["image_path"]
+        )
+        updated_cumulative_amount = (
+            payload.cumulative_amount
+            if payload.cumulative_amount is not None
+            else existing["cumulative_amount"]
+        )
+
+        cursor.execute(
+            """
+            UPDATE goals
+            SET goal_name = %s,
+                description = %s,
+                target_amount = %s,
+                deadline = %s,
+                image_path = %s,
+                cumulative_amount = %s
+            WHERE goal_id = %s
+            RETURNING goal_id, user_id, goal_name, description, target_amount, cumulative_amount, deadline, image_path;
+            """,
+            (
+                updated_goal_name,
+                updated_description,
+                updated_target_amount,
+                updated_deadline,
+                updated_image_path,
+                updated_cumulative_amount,
+                goal_id,
+            ),
+        )
+        updated_goal = cursor.fetchone()
+        
+        # 當累積金額達到目標時，自動寫入 achievements 表
+        if updated_cumulative_amount is not None and updated_cumulative_amount >= updated_target_amount:
+            cursor.execute("""
+                INSERT INTO achievements (goal_id, completion_date)
+                VALUES (%s, CURRENT_TIMESTAMP)
+                ON CONFLICT (goal_id) DO NOTHING;
+            """, (goal_id,))
+        
+        conn.commit()
+        return updated_goal
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"更新目標失敗：{e}")
+    finally:
+        cursor.close()
+
+@router.delete("/{goal_id}", status_code=status.HTTP_200_OK)
+def delete_goal(goal_id: int, conn=Depends(get_db_connection)):
+    """刪除目標。"""
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM goals WHERE goal_id = %s;", (goal_id,))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="找不到該目標")
+        conn.commit()
+        return {"status": "success", "message": "目標已刪除"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"刪除目標失敗：{e}")
     finally:
         cursor.close()

@@ -7,6 +7,10 @@ class LedgerItem {
     required this.amount,
     required this.isIncome,
     required this.icon,
+    this.recordId,
+    this.typeId,
+    this.goalId,
+    this.categoryName,
     this.recordedAt,
   });
 
@@ -15,6 +19,10 @@ class LedgerItem {
   final String amount;
   final bool isIncome;
   final IconData icon;
+  final int? recordId;
+  final int? typeId;
+  final int? goalId;
+  final String? categoryName;
   final DateTime? recordedAt;
 
   String get recordedAtLabel {

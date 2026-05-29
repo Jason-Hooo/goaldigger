@@ -4,11 +4,11 @@ class _HomeShellState extends State<HomeShell> {
   int _index = 0;
 
   late final List<Widget> _pages = [
-    const LedgerPage(),
-    const GoalsPage(),
-    const StatsPage(),
-    const SplitPage(),
-    SettingsPage(onLogout: widget.onLogout),
+    LedgerPage(user: widget.user),
+    GoalsPage(user: widget.user),
+    StatsPage(user: widget.user),
+    SplitPage(user: widget.user),
+    SettingsPage(onLogout: widget.onLogout, user: widget.user),
   ];
 
   @override

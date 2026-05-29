@@ -2,6 +2,7 @@ part of '../main.dart';
 
 class GoalItem {
   GoalItem({
+    this.goalId,
     required this.title,
     required this.description,
     required this.targetAmount,
@@ -10,6 +11,7 @@ class GoalItem {
     this.achievedAt,
   });
 
+  final int? goalId;
   final String title;
   final String description;
   final double targetAmount;
@@ -22,7 +24,7 @@ class GoalItem {
   String get achievedAtLabel {
     final achievedAt = this.achievedAt;
     if (achievedAt == null) {
-      return '尚未達成';
+      return isAchieved ? '已達成' : '尚未達成';
     }
     return '${achievedAt.year}/${_twoDigits(achievedAt.month)}/${_twoDigits(achievedAt.day)}';
   }
@@ -52,6 +54,7 @@ class GoalItem {
   String get progressLabel => '${(progress * 100).toStringAsFixed(0)}%';
 
   GoalItem copyWith({
+    int? goalId,
     String? title,
     String? description,
     double? targetAmount,
@@ -60,6 +63,7 @@ class GoalItem {
     DateTime? achievedAt,
   }) {
     return GoalItem(
+      goalId: goalId ?? this.goalId,
       title: title ?? this.title,
       description: description ?? this.description,
       targetAmount: targetAmount ?? this.targetAmount,

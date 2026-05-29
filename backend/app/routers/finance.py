@@ -1,10 +1,51 @@
 from fastapi import APIRouter, HTTPException, Depends, status
-from database import get_db_connection
-from schemas import FinanceSetupCreate
+from typing import Optional
+from ..database import get_db_connection
+from ..schemas import FinanceSetupCreate
 import calendar
 from datetime import datetime
 
 router = APIRouter(prefix="/finance", tags=["財務與預算設定"])
+
+@router.get("/summary/{user_id}")
+def get_finance_summary(user_id: int, month: Optional[str] = None, conn=Depends(get_db_connection)):
+    """取得指定月份的每日可支配所得與固定支出總額。"""
+    cursor = conn.cursor()
+    try:
+        record_month = month or datetime.now().strftime("%Y-%m")
+        cursor.execute(
+            """
+            SELECT info_id, daily_usable_amount
+            FROM monthly_financial_info
+            WHERE user_id = %s AND record_month = %s;
+            """,
+            (user_id, record_month),
+        )
+        info = cursor.fetchone()
+        if not info:
+            return {
+                "record_month": record_month,
+                "daily_usable_amount": 0,
+                "fixed_expense_total": 0,
+            }
+
+        cursor.execute(
+            """
+            SELECT COALESCE(SUM(amount), 0) AS total
+            FROM fixed_money_flow
+            WHERE info_id = %s;
+            """,
+            (info["info_id"],),
+        )
+        fixed_total = cursor.fetchone()["total"]
+
+        return {
+            "record_month": record_month,
+            "daily_usable_amount": float(info["daily_usable_amount"]),
+            "fixed_expense_total": float(fixed_total),
+        }
+    finally:
+        cursor.close()
 
 @router.post("/setup", status_code=status.HTTP_201_CREATED)
 def setup_monthly_finance(data: FinanceSetupCreate, conn=Depends(get_db_connection)):

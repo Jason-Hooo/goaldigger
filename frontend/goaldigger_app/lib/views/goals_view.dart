@@ -1,17 +1,25 @@
 part of '../main.dart';
 
 class GoalsPage extends StatefulWidget {
-  const GoalsPage({super.key});
+  const GoalsPage({super.key, required this.user});
+
+  final AuthUser user;
 
   @override
   State<GoalsPage> createState() => _GoalsPageState();
 }
 
 class _GoalsPageState extends State<GoalsPage> {
-  final List<GoalItem> _goals = goalItems;
+  final ApiConnect _api = ApiConnect();
+  List<GoalItem> _goals = [];
+  bool _isLoading = true;
+  String? _errorMessage;
 
   List<GoalItem> get _achievedGoals =>
       _goals.where((goal) => goal.isAchieved).toList();
+
+  List<GoalItem> get _currentGoals =>
+      _goals.where((goal) => !goal.isAchieved).toList();
 
   double get _totalTarget =>
       _goals.fold<double>(0, (sum, item) => sum + item.targetAmount);
@@ -24,6 +32,44 @@ class _GoalsPageState extends State<GoalsPage> {
       return 0;
     }
     return _totalSaved / _totalTarget;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadGoals();
+  }
+
+
+  Future<void> _loadGoals() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final goals = await _api.fetchGoals(widget.user.userId);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _goals = goals);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _errorMessage = _readableError(error));
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  String _readableError(Object error) {
+    if (error is ApiException) {
+      return error.message;
+    }
+    return '資料讀取失敗，請稍後再試。';
   }
 
   @override
@@ -44,9 +90,40 @@ class _GoalsPageState extends State<GoalsPage> {
                 goalCount: _goals.length,
               ),
               const SizedBox(height: 20),
-              _SectionHeader(title: '目標紀錄'),
+              _SectionHeader(title: '當前目標'),
               const SizedBox(height: 12),
-              if (_goals.isEmpty)
+              if (_isLoading)
+                const Center(child: CircularProgressIndicator())
+              else if (_errorMessage != null)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.error_outline,
+                              color: AppColors.pinkPrimary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(_errorMessage!)),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(
+                            onPressed: _loadGoals,
+                            child: const Text('重試'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else if (_currentGoals.isEmpty)
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(18),
@@ -54,13 +131,13 @@ class _GoalsPageState extends State<GoalsPage> {
                       children: const [
                         Icon(Icons.flag_rounded, color: AppColors.inkLight),
                         SizedBox(width: 12),
-                        Expanded(child: Text('還沒有任何目標，先按右下角新增一個。')),
+                        Expanded(child: Text('還沒有任何進行中的目標，先按右下角新增一個。')),
                       ],
                     ),
                   ),
                 )
               else
-                ..._goals.map(
+                ..._currentGoals.map(
                   (item) => GoalTile(
                     item: item,
                     onTap: () => _openGoalDetail(context, item),
@@ -84,7 +161,10 @@ class _GoalsPageState extends State<GoalsPage> {
                 )
               else
                 ..._achievedGoals.map(
-                  (goal) => _GoalAchievementTile(goal: goal),
+                  (goal) => _GoalAchievementTile(
+                    goal: goal,
+                    onTap: () => _openAchievedGoalDetail(context, goal),
+                  ),
                 ),
             ],
           ),
@@ -118,12 +198,28 @@ class _GoalsPageState extends State<GoalsPage> {
           },
           onDelete: () {
             Navigator.pop(sheetContext);
-            setState(() => _goals.remove(goal));
-            _showSnackBar(context, '已刪除 ${goal.title}');
+            _deleteGoal(goal);
           },
           onAdjust: (delta) {
             Navigator.pop(sheetContext);
             _applyGoalAdjustment(goal, delta);
+          },
+        );
+      },
+    );
+  }
+
+  void _openAchievedGoalDetail(BuildContext context, GoalItem goal) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return _AchievedGoalDetailSheet(
+          goal: goal,
+          onDelete: () {
+            Navigator.pop(sheetContext);
+            _deleteGoal(goal);
           },
         );
       },
@@ -140,53 +236,158 @@ class _GoalsPageState extends State<GoalsPage> {
       showDragHandle: true,
       builder: (sheetContext) => _GoalEditorSheet(
         initialGoal: initialGoal,
-        onSave: (goal) {
-          setState(() {
-            if (initialGoal == null) {
-              _goals.insert(0, goal);
-            } else {
-              final index = _goals.indexOf(initialGoal);
-              if (index >= 0) {
-                _goals[index] = goal;
-              } else {
-                _goals.insert(0, goal);
-              }
-            }
-          });
-          _showSnackBar(
-            context,
-            initialGoal == null ? '已新增目標：${goal.title}' : '已更新目標：${goal.title}',
-          );
-        },
+        onSave: (goal) => _handleGoalSave(initialGoal, goal),
       ),
     );
   }
 
-  void _applyGoalAdjustment(GoalItem goal, double delta) {
-    setState(() {
-      final index = _goals.indexOf(goal);
-      if (index < 0) {
-        return;
+  Future<void> _handleGoalSave(GoalItem? initialGoal, GoalItem goal) async {
+    if (initialGoal == null) {
+      await _createGoal(goal);
+      return;
+    }
+
+    await _updateGoal(goal);
+  }
+
+  Future<void> _createGoal(GoalItem goal) async {
+    try {
+      final created = await _api.createGoal(
+        userId: widget.user.userId,
+        title: goal.title,
+        description: goal.description,
+        targetAmount: goal.targetAmount,
+        deadline: goal.deadline,
+      );
+
+      if (goal.savedAmount > 0 && created.goalId != null) {
+        await _api.updateGoal(
+          goalId: created.goalId!,
+          savedAmount: goal.savedAmount,
+        );
       }
 
-      final updatedSavedAmount = _goals[index].savedAmount + delta;
-      final reachedTarget = updatedSavedAmount >= _goals[index].targetAmount;
-      final updatedGoal = _goals[index].copyWith(
-        savedAmount: updatedSavedAmount < 0 ? 0 : updatedSavedAmount,
-        achievedAt: reachedTarget
-            ? (_goals[index].achievedAt ?? DateTime.now())
-            : _goals[index].achievedAt,
-      );
-      _goals[index] = updatedGoal;
-    });
+      await _loadGoals();
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context, '已新增目標：${goal.title}');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context, _readableError(error));
+    }
+  }
 
-    _showSnackBar(context, '${delta >= 0 ? '增加' : '減少'}目標進度：${goal.title}');
+  Future<void> _updateGoal(GoalItem goal) async {
+    if (goal.goalId == null) {
+      _showSnackBar(context, '缺少目標編號，無法更新。');
+      return;
+    }
+
+    try {
+      await _api.updateGoal(
+        goalId: goal.goalId!,
+        title: goal.title,
+        description: goal.description,
+        targetAmount: goal.targetAmount,
+        deadline: goal.deadline,
+        savedAmount: goal.savedAmount,
+      );
+      await _loadGoals();
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context, '已更新目標：${goal.title}');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context, _readableError(error));
+    }
+  }
+
+  Future<void> _deleteGoal(GoalItem goal) async {
+    if (goal.goalId == null) {
+      _showSnackBar(context, '缺少目標編號，無法刪除。');
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('刪除目標'),
+        content: Text('確定要刪除「${goal.title}」嗎？\n這個操作無法復原。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('確認刪除'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    try {
+      await _api.deleteGoal(goal.goalId!);
+      await _loadGoals();
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context, '已刪除 ${goal.title}');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context, _readableError(error));
+    }
+  }
+
+  Future<void> _applyGoalAdjustment(GoalItem goal, double delta) async {
+    if (goal.goalId == null) {
+      _showSnackBar(context, '缺少目標編號，無法調整。');
+      return;
+    }
+
+    final rawAmount = goal.savedAmount + delta;
+    final updatedSavedAmount = rawAmount < 0 ? 0.0 : rawAmount;
+
+    try {
+      await _api.updateGoal(
+        goalId: goal.goalId!,
+        savedAmount: updatedSavedAmount,
+      );
+      await _loadGoals();
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context, '${delta >= 0 ? '增加' : '減少'}目標進度：${goal.title}');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context, _readableError(error));
+    }
   }
 
   void _showSnackBar(BuildContext context, String message) {
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
       ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
   }
 }
 
@@ -256,40 +457,127 @@ class _GoalSummaryCard extends StatelessWidget {
 }
 
 class _GoalAchievementTile extends StatelessWidget {
-  const _GoalAchievementTile({required this.goal});
+  const _GoalAchievementTile({required this.goal, required this.onTap});
 
   final GoalItem goal;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: AppColors.green.withValues(alpha: 0.15),
-          child: const Icon(Icons.emoji_events, color: AppColors.green),
-        ),
-        title: Text(goal.title),
-        subtitle: Text('${goal.description}\n達成日期：${goal.achievedAtLabel}'),
-        isThreeLine: true,
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              goal.targetAmountLabel,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              '已達成',
-              style: TextStyle(
-                color: AppColors.green,
-                fontWeight: FontWeight.w600,
+      child: InkWell(
+        onTap: onTap,
+        child: ListTile(
+          leading: CircleAvatar(
+            backgroundColor: AppColors.green.withValues(alpha: 0.15),
+            child: const Icon(Icons.emoji_events, color: AppColors.green),
+          ),
+          title: Text(goal.title),
+          subtitle: Text('${goal.description}\n達成日期：${goal.achievedAtLabel}'),
+          isThreeLine: true,
+          trailing: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                goal.targetAmountLabel,
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
-            ),
-          ],
+              const SizedBox(height: 4),
+              const Text(
+                '已達成',
+                style: TextStyle(
+                  color: AppColors.green,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _AchievedGoalDetailSheet extends StatelessWidget {
+  const _AchievedGoalDetailSheet({
+    required this.goal,
+    required this.onDelete,
+  });
+
+  final GoalItem goal;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        12,
+        20,
+        20 + MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            goal.title,
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            goal.description,
+            style: const TextStyle(color: AppColors.inkLight),
+          ),
+          const SizedBox(height: 18),
+          _DetailRow(label: '期限', value: goal.deadlineLabel),
+          _DetailRow(label: '目標金額', value: goal.targetAmountLabel),
+          _DetailRow(label: '目前已存', value: goal.savedAmountLabel),
+          _DetailRow(label: '達成日期', value: goal.achievedAtLabel),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: LinearProgressIndicator(
+              value: 1.0,
+              minHeight: 10,
+              backgroundColor: AppColors.pinkSoft,
+              valueColor: const AlwaysStoppedAnimation(AppColors.green),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text('進度 100%'),
+          const SizedBox(height: 18),
+          ElevatedButton(
+            onPressed: () {
+              showDialog<bool>(
+                context: context,
+                builder: (dialogContext) => AlertDialog(
+                  title: const Text('刪除目標'),
+                  content: Text('確定要刪除「${goal.title}」嗎？\n這個操作無法復原。'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(false),
+                      child: const Text('取消'),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                      onPressed: () => Navigator.of(dialogContext).pop(true),
+                      child: const Text('確認刪除'),
+                    ),
+                  ],
+                ),
+              ).then((confirmed) {
+                if (confirmed == true) {
+                  onDelete();
+                }
+              });
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('刪除目標'),
+          ),
+        ],
       ),
     );
   }
@@ -730,6 +1018,7 @@ class _GoalEditorSheetState extends State<_GoalEditorSheet> {
 
     widget.onSave(
       GoalItem(
+        goalId: widget.initialGoal?.goalId,
         title: title,
         description: description,
         targetAmount: targetAmount,

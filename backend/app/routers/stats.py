@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
-from database import get_db_connection
+from ..database import get_db_connection
 from psycopg2.extras import RealDictCursor
 from typing import List
 

@@ -25,18 +25,10 @@ CREATE TABLE public.consumption_participants (
 CREATE TABLE public.expense_types (
   type_id integer NOT NULL DEFAULT nextval('expense_types_type_id_seq'::regclass),
   type_name character varying NOT NULL,
+  user_id integer,
   image_path character varying,
   is_expense boolean DEFAULT true,
   CONSTRAINT expense_types_pkey PRIMARY KEY (type_id)
-);
-CREATE TABLE public.fixed_money_flow (
-  flow_id integer NOT NULL DEFAULT nextval('fixed_money_flow_flow_id_seq'::regclass),
-  info_id integer NOT NULL,
-  category character varying NOT NULL,
-  description character varying,
-  amount numeric NOT NULL,
-  CONSTRAINT fixed_money_flow_pkey PRIMARY KEY (flow_id),
-  CONSTRAINT fixed_money_flow_info_id_fkey FOREIGN KEY (info_id) REFERENCES public.monthly_financial_info(info_id)
 );
 CREATE TABLE public.goals (
   goal_id integer NOT NULL DEFAULT nextval('goals_goal_id_seq'::regclass),
@@ -55,9 +47,11 @@ CREATE TABLE public.group_consumptions (
   group_id integer NOT NULL,
   name character varying NOT NULL,
   amount numeric NOT NULL,
+  type_id integer,
   created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT group_consumptions_pkey PRIMARY KEY (consumption_id),
-  CONSTRAINT group_consumptions_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.groups_table(group_id)
+  CONSTRAINT group_consumptions_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.groups_table(group_id),
+  CONSTRAINT group_consumptions_type_id_fkey FOREIGN KEY (type_id) REFERENCES public.expense_types(type_id)
 );
 CREATE TABLE public.group_members (
   group_id integer NOT NULL,
@@ -69,16 +63,9 @@ CREATE TABLE public.group_members (
 CREATE TABLE public.groups_table (
   group_id integer NOT NULL DEFAULT nextval('groups_table_group_id_seq'::regclass),
   group_name character varying NOT NULL,
+  invitation_code character varying NOT NULL UNIQUE,
   created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT groups_table_pkey PRIMARY KEY (group_id)
-);
-CREATE TABLE public.monthly_financial_info (
-  info_id integer NOT NULL DEFAULT nextval('monthly_financial_info_info_id_seq'::regclass),
-  user_id integer NOT NULL,
-  record_month character varying NOT NULL,
-  daily_usable_amount numeric DEFAULT 0.00,
-  CONSTRAINT monthly_financial_info_pkey PRIMARY KEY (info_id),
-  CONSTRAINT monthly_financial_info_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id)
 );
 CREATE TABLE public.personal_consumptions (
   consumption_id integer NOT NULL DEFAULT nextval('personal_consumptions_consumption_id_seq'::regclass),
@@ -98,7 +85,6 @@ CREATE TABLE public.users (
   name character varying NOT NULL,
   email character varying NOT NULL UNIQUE,
   created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-  fcm_token character varying,
   password character varying,
   CONSTRAINT users_pkey PRIMARY KEY (user_id)
 );
