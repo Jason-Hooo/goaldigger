@@ -4,8 +4,18 @@
 *.log
 *.pyc
 *.swp
+.DS_Store
+.atom/
+.build/
 .buildlog/
 .history
+*.iml
+*.ipr
+*.iws
+.idea/
+.swiftpm/
+.svn/
+migrate_working_dir/
 
 
 
@@ -36,11 +46,13 @@ analysis_benchmark.json
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
+.pub-cache/
 **/generated_plugin_registrant.dart
 .packages
 .pub-preload-cache/
 .pub/
 build/
+**/build/
 flutter_*.png
 linked_*.ds
 unlinked.ds
@@ -55,6 +67,9 @@ unlinked_spec.ds
 **/android/local.properties
 **/android/**/GeneratedPluginRegistrant.java
 **/android/key.properties
+**/android/app/debug
+**/android/app/profile
+**/android/app/release
 *.jks
 
 # iOS/XCode related
@@ -106,9 +121,13 @@ unlinked_spec.ds
 
 # Coverage
 coverage/
+**/coverage/
 
 # Symbols
 app.*.symbols
+
+# Obfuscation / mapping
+app.*.map.json
 
 # Exceptions to above rules.
 !**/ios/**/default.mode1v3

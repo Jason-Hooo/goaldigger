@@ -46,6 +46,7 @@ class GoalResponse(BaseModel):
     cumulative_amount: float
     deadline: Optional[date] = None
     image_path: Optional[str] = None
+    completion_date: Optional[datetime] = None
 
     class Config:
         from_attributes = True  # 讓 Pydantic 可以順利讀取資料庫撈出來的資料
@@ -53,11 +54,6 @@ class GoalResponse(BaseModel):
 class ExpenseSummary(BaseModel):
     category: str
     total_amount: float
-
-class MonthlyReport(BaseModel):
-    month: str
-    total_spent: float
-    breakdown: List[ExpenseSummary]
 
 class LedgerCreate(BaseModel):
     user_id: int
@@ -67,6 +63,26 @@ class LedgerCreate(BaseModel):
     goal_id: Optional[int] = None
 
 
+class LedgerUpdate(BaseModel):
+    user_id: int
+    type_id: int
+    amount: float = Field(..., gt=0)
+    description: Optional[str] = None
+    goal_id: Optional[int] = None
+
+
+class ExpenseTypeCreate(BaseModel):
+    user_id: int
+    type_name: str = Field(..., min_length=1, max_length=40)
+    is_expense: bool = True
+
+
+class ExpenseTypeUpdate(BaseModel):
+    user_id: int
+    type_name: str = Field(..., min_length=1, max_length=40)
+    is_expense: bool
+
+
 class LedgerResponse(BaseModel):
     consumption_id: int
     user_id: int
@@ -74,6 +90,9 @@ class LedgerResponse(BaseModel):
     amount: float
     description: Optional[str] = None  
     created_at: datetime
+    goal_id: Optional[int] = None
+    type_name: Optional[str] = None
+    is_expense: Optional[bool] = None
 
     class Config:
         from_attributes = True  # 
@@ -83,13 +102,12 @@ class GoalAchieveResponse(BaseModel):
     goal_id: int
     completion_date: datetime
 
-class TokenUpdate(BaseModel):
-    user_id: int
-    fcm_token: str
-
 class GroupCreate(BaseModel):
     group_name: str
     user_ids: List[int]  # 參與此群組的使用者 ID 列表
+
+class GroupMemberAdd(BaseModel):
+    user_ids: List[int]
 
 class SplitDetail(BaseModel):
     user_id: int
@@ -100,16 +118,14 @@ class ExpenseCreate(BaseModel):
     name: str
     amount: float
     payer_id: int  # 誰先代墊的
+    type_id: Optional[int] = None  # 支出類別
     split_details: List[SplitDetail]  # 大家平分的明細
     
 
-class FixedMoneyFlowItem(BaseModel):
-    category: str = Field(..., example="房租")
+class GoalUpdate(BaseModel):
+    goal_name: Optional[str] = None
     description: Optional[str] = None
-    amount: float = Field(..., gt=0, example=8000.0)
-
-class FinanceSetupCreate(BaseModel):
-    user_id: int
-    record_month: str = Field(..., example="2026-05", description="格式必須為 YYYY-MM")
-    monthly_income: float = Field(..., description="這個月的總預算或薪水")
-    fixed_flows: List[FixedMoneyFlowItem] = []
+    target_amount: Optional[float] = Field(None, gt=0)
+    deadline: Optional[date] = None
+    image_path: Optional[str] = None
+    cumulative_amount: Optional[float] = Field(None, ge=0)

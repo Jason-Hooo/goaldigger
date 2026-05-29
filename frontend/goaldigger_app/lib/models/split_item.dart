@@ -2,6 +2,8 @@ part of '../main.dart';
 
 class SplitItem {
   SplitItem({
+    this.consumptionId,
+    this.groupId,
     required this.title,
     required this.subtitle,
     required this.amount,
@@ -13,6 +15,8 @@ class SplitItem {
     this.confirmationSent = false,
   });
 
+  final int? consumptionId;
+  final int? groupId;
   final String title;
   final String subtitle;
   final String amount;
@@ -37,5 +41,22 @@ class SplitItem {
     return proportions
         .map((value) => '${(value * 100).toStringAsFixed(0)}%')
         .join(' / ');
+  }
+}
+
+class GroupMember {
+  GroupMember({
+    required this.userId,
+    required this.userName,
+  });
+
+  final int userId;
+  final String userName;
+
+  factory GroupMember.fromJson(Map<String, dynamic> json) {
+    return GroupMember(
+      userId: json['user_id'] as int,
+      userName: json['user_name'] as String? ?? '',
+    );
   }
 }

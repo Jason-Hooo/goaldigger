@@ -1,14 +1,21 @@
 part of '../main.dart';
 
 class LedgerPage extends StatefulWidget {
-  const LedgerPage({super.key});
+  const LedgerPage({super.key, required this.user});
+
+  final AuthUser user;
 
   @override
   State<LedgerPage> createState() => _LedgerPageState();
 }
 
 class _LedgerPageState extends State<LedgerPage> {
-  final List<LedgerItem> _items = ledgerItems;
+  final ApiConnect _api = ApiConnect();
+  List<LedgerItem> _items = [];
+  List<ExpenseType> _expenseTypes = [];
+  List<GoalItem> _goals = [];
+  bool _isLoading = true;
+  String? _errorMessage;
 
   double get _incomeTotal => _items
       .where((item) => item.isIncome)
@@ -19,6 +26,82 @@ class _LedgerPageState extends State<LedgerPage> {
       .fold<double>(0, (sum, item) => sum + _parseAmount(item.amount));
 
   double get _balance => _incomeTotal - _expenseTotal;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLedger();
+  }
+
+  Future<void> _loadLedger() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final types = await _api.fetchExpenseTypes(widget.user.userId);
+      final goals = await _api.fetchGoals(widget.user.userId);
+      final records = await _api.fetchLedgerHistory(
+        widget.user.userId,
+        limit: 80,
+      );
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _expenseTypes = types;
+        _goals = goals;
+        _items = records.map((record) => _mapLedgerItem(record)).toList();
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _errorMessage = _readableError(error));
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  LedgerItem _mapLedgerItem(LedgerRecord record) {
+    final type = _expenseTypes
+        .cast<ExpenseType?>()
+        .firstWhere((item) => item?.id == record.typeId, orElse: () => null);
+    final typeName = record.typeName ?? type?.name ?? '未分類';
+    final isIncome = record.isExpense == null
+        ? !(type?.isExpense ?? true)
+        : !(record.isExpense ?? true);
+
+    final description = (record.description ?? '').trim();
+    final parts = description.split(' · ');
+    final title = parts.firstWhere((part) => part.isNotEmpty, orElse: () => typeName);
+    final note = parts.length > 1 ? parts.sublist(1).join(' · ') : '';
+    final subtitle = note.isEmpty ? typeName : '$typeName · $note';
+
+    return LedgerItem(
+      recordId: record.recordId,
+      typeId: record.typeId,
+      goalId: record.goalId,
+      categoryName: typeName,
+      title: title,
+      subtitle: subtitle,
+      amount: '${isIncome ? '+' : '-'}\$${_formatAmount(record.amount)}',
+      isIncome: isIncome,
+      icon: _iconForCategory(typeName, isIncome),
+      recordedAt: record.createdAt,
+    );
+  }
+
+  String _readableError(Object error) {
+    if (error is ApiException) {
+      return error.message;
+    }
+    return '資料讀取失敗，請稍後再試。';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,7 +122,38 @@ class _LedgerPageState extends State<LedgerPage> {
               const SizedBox(height: 20),
               _SectionHeader(title: '最新紀錄'),
               const SizedBox(height: 12),
-              if (_items.isEmpty)
+              if (_isLoading)
+                const Center(child: CircularProgressIndicator())
+              else if (_errorMessage != null)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.error_outline,
+                              color: AppColors.pinkPrimary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(_errorMessage!)),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(
+                            onPressed: _loadLedger,
+                            child: const Text('重試'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else if (_items.isEmpty)
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(18),
@@ -106,7 +220,10 @@ class _LedgerPageState extends State<LedgerPage> {
               const SizedBox(height: 18),
               _DetailRow(label: '類型', value: item.isIncome ? '收入' : '支出'),
               _DetailRow(label: '金額', value: item.amount),
-              _DetailRow(label: '圖示', value: _ledgerCategoryName(item.icon)),
+              _DetailRow(
+                label: '分類',
+                value: item.categoryName ?? _ledgerCategoryName(item.icon),
+              ),
               _DetailRow(label: '時間', value: item.recordedAtLabel),
               const SizedBox(height: 18),
               Row(
@@ -119,6 +236,22 @@ class _LedgerPageState extends State<LedgerPage> {
                           context,
                           isIncome: item.isIncome,
                           initialItem: item,
+                          isEditing: true,
+                        );
+                      },
+                      child: const Text('編輯'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        _openEntrySheet(
+                          context,
+                          isIncome: item.isIncome,
+                          initialItem: item,
+                          isEditing: false,
                         );
                       },
                       child: const Text('複製新增'),
@@ -127,10 +260,9 @@ class _LedgerPageState extends State<LedgerPage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: ElevatedButton(
-                      onPressed: () {
+                      onPressed: () async {
                         Navigator.pop(sheetContext);
-                        setState(() => _items.remove(item));
-                        _showSnackBar(context, '已刪除 ${item.title}');
+                        await _deleteLedger(item);
                       },
                       child: const Text('刪除'),
                     ),
@@ -148,25 +280,79 @@ class _LedgerPageState extends State<LedgerPage> {
     BuildContext context, {
     required bool isIncome,
     LedgerItem? initialItem,
+    bool isEditing = false,
   }) async {
+    if (_expenseTypes.isEmpty) {
+      _showSnackBar(context, '尚未取得分類資料，請稍後再試。');
+      return;
+    }
+
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
       builder: (sheetContext) => _LedgerEntrySheet(
+        expenseTypes: _expenseTypes,
+        goals: _goals,
         initialItem: initialItem,
         isIncome: isIncome,
-        onSave: (item) {
-          setState(() {
-            _items.insert(0, item);
-          });
-          _showSnackBar(
-            context,
-            '已新增${item.isIncome ? '收入' : '支出'}：${item.title}',
-          );
-        },
+        isEditing: isEditing,
+        onSave: _saveLedger,
       ),
     );
+  }
+
+  Future<void> _saveLedger(_LedgerDraft draft) async {
+    try {
+      if (draft.recordId == null) {
+        await _api.createLedger(
+          userId: widget.user.userId,
+          typeId: draft.typeId,
+          amount: draft.amount,
+          description: draft.description,
+          goalId: draft.goalId,
+        );
+      } else {
+        await _api.updateLedger(
+          recordId: draft.recordId!,
+          userId: widget.user.userId,
+          typeId: draft.typeId,
+          amount: draft.amount,
+          description: draft.description,
+          goalId: draft.goalId,
+        );
+      }
+      await _loadLedger();
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(
+        context,
+        draft.recordId == null
+            ? '已新增${draft.isIncome ? '收入' : '支出'}：${draft.title}'
+            : '已更新${draft.isIncome ? '收入' : '支出'}：${draft.title}',
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context, _readableError(error));
+    }
+  }
+
+  Future<void> _deleteLedger(LedgerItem item) async {
+    if (item.recordId == null) {
+      _showSnackBar(context, '缺少紀錄編號，無法刪除。');
+      return;
+    }
+
+    try {
+      await _api.deleteLedger(item.recordId!, goalId: item.goalId);
+      await _loadLedger();
+      _showSnackBar(context, '已刪除 ${item.title}');
+    } catch (error) {
+      _showSnackBar(context, _readableError(error));
+    }
   }
 
   void _showSnackBar(BuildContext context, String message) {
@@ -212,12 +398,18 @@ class _LedgerEntrySheet extends StatefulWidget {
   const _LedgerEntrySheet({
     required this.isIncome,
     required this.onSave,
+    required this.expenseTypes,
+    required this.goals,
+    required this.isEditing,
     this.initialItem,
   });
 
   final bool isIncome;
   final LedgerItem? initialItem;
-  final ValueChanged<LedgerItem> onSave;
+  final bool isEditing;
+  final ValueChanged<_LedgerDraft> onSave;
+  final List<ExpenseType> expenseTypes;
+  final List<GoalItem> goals;
 
   @override
   State<_LedgerEntrySheet> createState() => _LedgerEntrySheetState();
@@ -228,8 +420,8 @@ class _LedgerEntrySheetState extends State<_LedgerEntrySheet> {
   late final TextEditingController _amountController;
   late final TextEditingController _noteController;
   late bool _selectedIncome;
-  late String _selectedCategory;
-  String? _linkedGoalTitle;
+  int? _selectedTypeId;
+  int? _linkedGoalId;
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
 
   @override
@@ -245,12 +437,8 @@ class _LedgerEntrySheetState extends State<_LedgerEntrySheet> {
       text: _extractNote(widget.initialItem?.subtitle ?? ''),
     );
     _selectedIncome = widget.initialItem?.isIncome ?? widget.isIncome;
-    _selectedCategory = widget.initialItem != null
-        ? _ledgerCategoryName(widget.initialItem!.icon)
-        : (_selectedIncome
-              ? _incomeCategories.first
-              : _expenseCategories.first);
-    _linkedGoalTitle = null;
+    _selectedTypeId = _resolveInitialTypeId(widget.initialItem?.typeId);
+    _linkedGoalId = widget.initialItem?.goalId;
   }
 
   @override
@@ -261,11 +449,35 @@ class _LedgerEntrySheetState extends State<_LedgerEntrySheet> {
     super.dispose();
   }
 
+  List<ExpenseType> get _incomeTypes =>
+      widget.expenseTypes.where((type) => !type.isExpense).toList();
+
+  List<ExpenseType> get _expenseTypes =>
+      widget.expenseTypes.where((type) => type.isExpense).toList();
+
+  int? _resolveInitialTypeId(int? initialId) {
+    final types = _selectedIncome ? _incomeTypes : _expenseTypes;
+    if (initialId != null && types.any((type) => type.id == initialId)) {
+      return initialId;
+    }
+    return types.isNotEmpty ? types.first.id : null;
+  }
+
+  ExpenseType? _findTypeById(int? typeId) {
+    if (typeId == null) {
+      return null;
+    }
+    return widget.expenseTypes
+        .cast<ExpenseType?>()
+        .firstWhere((item) => item?.id == typeId, orElse: () => null);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final categories = _selectedIncome ? _incomeCategories : _expenseCategories;
-    if (!categories.contains(_selectedCategory)) {
-      _selectedCategory = categories.first;
+    final categories = _selectedIncome ? _incomeTypes : _expenseTypes;
+    if (categories.isNotEmpty &&
+        categories.every((type) => type.id != _selectedTypeId)) {
+      _selectedTypeId = categories.first.id;
     }
 
     return Padding(
@@ -284,12 +496,14 @@ class _LedgerEntrySheetState extends State<_LedgerEntrySheet> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                widget.initialItem == null ? '新增紀錄' : '複製新增',
+                widget.initialItem == null
+                    ? '新增紀錄'
+                    : (widget.isEditing ? '編輯紀錄' : '複製新增'),
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
               const SizedBox(height: 8),
               Text(
-                '把日常收支直接記下來，示範資料會即時更新。',
+                '把日常收支直接記下來，系統會即時同步。',
                 style: Theme.of(
                   context,
                 ).textTheme.bodyMedium?.copyWith(color: AppColors.inkLight),
@@ -304,9 +518,7 @@ class _LedgerEntrySheetState extends State<_LedgerEntrySheet> {
                     onSelected: (_) {
                       setState(() {
                         _selectedIncome = true;
-                        if (!(_incomeCategories.contains(_selectedCategory))) {
-                          _selectedCategory = _incomeCategories.first;
-                        }
+                        _selectedTypeId = _resolveInitialTypeId(_selectedTypeId);
                       });
                     },
                   ),
@@ -316,9 +528,7 @@ class _LedgerEntrySheetState extends State<_LedgerEntrySheet> {
                     onSelected: (_) {
                       setState(() {
                         _selectedIncome = false;
-                        if (!(_expenseCategories.contains(_selectedCategory))) {
-                          _selectedCategory = _expenseCategories.first;
-                        }
+                        _selectedTypeId = _resolveInitialTypeId(_selectedTypeId);
                       });
                     },
                   ),
@@ -341,15 +551,15 @@ class _LedgerEntrySheetState extends State<_LedgerEntrySheet> {
                 },
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                key: ValueKey(_selectedCategory),
-                initialValue: _selectedCategory,
+              DropdownButtonFormField<int>(
+                key: Key('type-${_selectedTypeId ?? 'none'}'),
+                initialValue: _selectedTypeId,
                 decoration: const InputDecoration(labelText: '分類'),
                 items: categories
                     .map(
-                      (value) => DropdownMenuItem<String>(
-                        value: value,
-                        child: Text(value),
+                      (type) => DropdownMenuItem<int>(
+                        value: type.id,
+                        child: Text(type.name),
                       ),
                     )
                     .toList(),
@@ -357,7 +567,7 @@ class _LedgerEntrySheetState extends State<_LedgerEntrySheet> {
                   if (value == null) {
                     return;
                   }
-                  setState(() => _selectedCategory = value);
+                  setState(() => _selectedTypeId = value);
                 },
               ),
               const SizedBox(height: 12),
@@ -394,24 +604,24 @@ class _LedgerEntrySheetState extends State<_LedgerEntrySheet> {
                 maxLength: 60,
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<String?>(
-                key: ValueKey(_linkedGoalTitle),
-                initialValue: _linkedGoalTitle,
+              DropdownButtonFormField<int?>(
+                key: Key('goal-${_linkedGoalId ?? 'none'}'),
+                initialValue: _linkedGoalId,
                 decoration: const InputDecoration(labelText: '同步到目標'),
                 items: [
-                  const DropdownMenuItem<String?>(
+                  const DropdownMenuItem<int?>(
                     value: null,
                     child: Text('不同步'),
                   ),
-                  ...goalItems.map(
-                    (goal) => DropdownMenuItem<String?>(
-                      value: goal.title,
+                  ...widget.goals.map(
+                    (goal) => DropdownMenuItem<int?>(
+                      value: goal.goalId,
                       child: Text(goal.title),
                     ),
                   ),
                 ],
                 onChanged: (value) {
-                  setState(() => _linkedGoalTitle = value);
+                  setState(() => _linkedGoalId = value);
                 },
               ),
               const SizedBox(height: 20),
@@ -427,7 +637,7 @@ class _LedgerEntrySheetState extends State<_LedgerEntrySheet> {
                   Expanded(
                     child: ElevatedButton(
                       onPressed: _save,
-                      child: const Text('儲存'),
+                      child: Text(widget.initialItem == null ? '建立' : '儲存'),
                     ),
                   ),
                 ],
@@ -444,47 +654,60 @@ class _LedgerEntrySheetState extends State<_LedgerEntrySheet> {
       return;
     }
 
+    if (_selectedTypeId == null) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(content: Text('請先選擇分類。')));
+      return;
+    }
+
     final title = _titleController.text.trim();
     final amount = double.parse(
       _amountController.text.trim().replaceAll(',', ''),
     );
     final note = _noteController.text.trim();
 
-    final resolvedAmount =
-        '${_selectedIncome ? '+' : '-'}\$${_formatAmount(amount.abs())}';
+    final type = _findTypeById(_selectedTypeId);
+    final typeName = type?.name ?? '未分類';
+    final description = note.isEmpty ? title : '$title · $note';
 
     widget.onSave(
-      LedgerItem(
+      _LedgerDraft(
+        recordId: widget.isEditing ? widget.initialItem?.recordId : null,
         title: title,
-        subtitle: note.isEmpty
-            ? _selectedCategory
-            : '$_selectedCategory · $note',
-        amount: resolvedAmount,
+        categoryName: typeName,
+        amount: amount,
         isIncome: _selectedIncome,
-        icon: _iconForCategory(_selectedCategory, _selectedIncome),
-        recordedAt: DateTime.now(),
+        description: description,
+        typeId: _selectedTypeId!,
+        goalId: _linkedGoalId,
       ),
     );
 
-    if (_linkedGoalTitle != null) {
-      _applyGoalImpact(_linkedGoalTitle!, amount, _selectedIncome);
-    }
-
     Navigator.pop(context);
   }
+}
 
-  void _applyGoalImpact(String goalTitle, double amount, bool isIncome) {
-    final index = goalItems.indexWhere((goal) => goal.title == goalTitle);
-    if (index < 0) {
-      return;
-    }
+class _LedgerDraft {
+  const _LedgerDraft({
+    this.recordId,
+    required this.title,
+    required this.categoryName,
+    required this.amount,
+    required this.isIncome,
+    required this.description,
+    required this.typeId,
+    this.goalId,
+  });
 
-    final delta = isIncome ? amount : -amount;
-    final updatedSavedAmount = goalItems[index].savedAmount + delta;
-    goalItems[index] = goalItems[index].copyWith(
-      savedAmount: updatedSavedAmount < 0 ? 0 : updatedSavedAmount,
-    );
-  }
+  final int? recordId;
+  final String title;
+  final String categoryName;
+  final double amount;
+  final bool isIncome;
+  final String description;
+  final int typeId;
+  final int? goalId;
 }
 
 String _formatAmount(double value) {
@@ -540,6 +763,3 @@ String _ledgerCategoryName(IconData icon) {
     _ => '其他',
   };
 }
-
-const List<String> _incomeCategories = ['薪資', '獎金', '退款', '其他'];
-const List<String> _expenseCategories = ['餐飲', '購物', '交通', '帳單', '其他'];
