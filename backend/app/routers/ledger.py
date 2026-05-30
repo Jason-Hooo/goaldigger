@@ -9,61 +9,24 @@ router = APIRouter(prefix="/ledger", tags=["核心記帳"])
 
 
 def _adjust_goal_progress(cursor, goal_id: Optional[int], delta: float) -> Optional[dict]:
-    """Adjust goal progress by a signed delta, clamping at zero.
+    """Adjust goal progress by a signed delta.
 
-    If the goal's cumulative amount reaches or exceeds the target amount,
-    insert a row into `achievements` (if not already present) using the same
-    DB transaction. Returns the inserted/found achievement row or ``None``.
+    Only updates the goal's cumulative_amount. Does not automatically insert
+    into achievements - users must manually trigger achievement.
+    Allows negative cumulative_amount when expenses exceed income.
     """
     if goal_id is None or delta == 0:
         return None
 
-    # Update the goal's cumulative_amount (clamped at zero)
+    # Update the goal's cumulative_amount (allows negative values)
     cursor.execute(
         """
         UPDATE goals
-        SET cumulative_amount = GREATEST(COALESCE(cumulative_amount, 0) + %s, 0)
+        SET cumulative_amount = COALESCE(cumulative_amount, 0) + %s
         WHERE goal_id = %s;
         """,
         (delta, goal_id),
     )
-
-    # Re-read the goal to determine if it has reached the target
-    cursor.execute(
-        "SELECT cumulative_amount, target_amount FROM goals WHERE goal_id = %s;",
-        (goal_id,),
-    )
-    goal_row = cursor.fetchone()
-    if not goal_row:
-        return None
-
-    cum = goal_row.get("cumulative_amount")
-    target = goal_row.get("target_amount")
-    try:
-        if cum is not None and target is not None and float(cum) >= float(target):
-            cursor.execute(
-                """
-                INSERT INTO achievements (goal_id, completion_date)
-                VALUES (%s, CURRENT_TIMESTAMP)
-                ON CONFLICT (goal_id) DO NOTHING
-                RETURNING goal_id, completion_date;
-                """,
-                (goal_id,),
-            )
-            achieved = cursor.fetchone()
-            if achieved:
-                return achieved
-
-            # If no row was returned (already existed), fetch the existing achievement
-            cursor.execute(
-                "SELECT goal_id, completion_date FROM achievements WHERE goal_id = %s;",
-                (goal_id,),
-            )
-            return cursor.fetchone()
-    except Exception:
-        # Do not let achievement insert failures break the calling flow;
-        # caller will commit/rollback as appropriate.
-        return None
 
     return None
 
@@ -264,16 +227,28 @@ def create_consumption(ledger_data: LedgerCreate, conn = Depends(get_db_connecti
             raise HTTPException(status_code=404, detail="找不到可用的記帳類別")
         is_expense = type_row['is_expense']
 
-        # Budget checking logic removed as monthly_financial_info table has been removed
+        # Check if goal is already achieved
+        if ledger_data.goal_id is not None:
+            cursor.execute(
+                """
+                SELECT a.goal_id FROM achievements a
+                WHERE a.goal_id = %s;
+                """,
+                (ledger_data.goal_id,),
+            )
+            if cursor.fetchone():
+                raise HTTPException(status_code=400, detail="無法同步到已達成的目標")
 
         # 4. 新增消費記錄 (不管是否超支都要存)
         cursor.execute("""
-            INSERT INTO personal_consumptions (user_id, type_id, amount, description, goal_id)
-            VALUES (%s, %s, %s, %s, %s);
-        """, (ledger_data.user_id, ledger_data.type_id, ledger_data.amount, ledger_data.description, ledger_data.goal_id))
+            INSERT INTO personal_consumptions (user_id, type_id, amount, description, goal_id, group_consumption_id)
+            VALUES (%s, %s, %s, %s, %s, %s);
+        """, (ledger_data.user_id, ledger_data.type_id, ledger_data.amount, ledger_data.description, ledger_data.goal_id, ledger_data.group_consumption_id))
 
-        _adjust_goal_progress(cursor, ledger_data.goal_id, float(ledger_data.amount))
-        
+        # Adjust goal progress - use negative amount for expenses
+        final_amount = float(ledger_data.amount) if not is_expense else -float(ledger_data.amount)
+        _adjust_goal_progress(cursor, ledger_data.goal_id, final_amount)
+
         conn.commit()
         return {"status": "success", "message": "記帳完成！"}
 
@@ -291,9 +266,10 @@ def update_consumption(record_id: int, ledger_data: LedgerUpdate, conn=Depends(g
     try:
         cursor.execute(
             """
-            SELECT consumption_id, amount, goal_id
-            FROM personal_consumptions
-            WHERE consumption_id = %s AND user_id = %s;
+            SELECT pc.consumption_id, pc.amount, pc.goal_id, et.is_expense
+            FROM personal_consumptions pc
+            JOIN expense_types et ON pc.type_id = et.type_id
+            WHERE pc.consumption_id = %s AND pc.user_id = %s;
             """,
             (record_id, ledger_data.user_id),
         )
@@ -302,6 +278,31 @@ def update_consumption(record_id: int, ledger_data: LedgerUpdate, conn=Depends(g
             raise HTTPException(status_code=404, detail="找不到該筆記帳紀錄")
         previous_amount = float(existing["amount"])
         previous_goal_id = existing["goal_id"]
+        previous_is_expense = existing["is_expense"]
+
+        # Check if current goal is achieved and user is trying to change it
+        if previous_goal_id is not None and ledger_data.goal_id != previous_goal_id:
+            cursor.execute(
+                """
+                SELECT a.goal_id FROM achievements a
+                WHERE a.goal_id = %s;
+                """,
+                (previous_goal_id,),
+            )
+            if cursor.fetchone():
+                raise HTTPException(status_code=400, detail="已達成的目標無法修改同步設定")
+
+        # Check if new goal is already achieved
+        if ledger_data.goal_id is not None and ledger_data.goal_id != previous_goal_id:
+            cursor.execute(
+                """
+                SELECT a.goal_id FROM achievements a
+                WHERE a.goal_id = %s;
+                """,
+                (ledger_data.goal_id,),
+            )
+            if cursor.fetchone():
+                raise HTTPException(status_code=400, detail="無法同步到已達成的目標")
 
         cursor.execute(
             """
@@ -315,6 +316,7 @@ def update_consumption(record_id: int, ledger_data: LedgerUpdate, conn=Depends(g
         type_row = cursor.fetchone()
         if not type_row:
             raise HTTPException(status_code=404, detail="找不到可用的記帳類別")
+        is_expense = type_row['is_expense']
 
         cursor.execute(
             """
@@ -324,7 +326,7 @@ def update_consumption(record_id: int, ledger_data: LedgerUpdate, conn=Depends(g
                 description = %s,
                 goal_id = %s
             WHERE consumption_id = %s
-            RETURNING consumption_id, user_id, type_id, amount, description, created_at, goal_id;
+            RETURNING consumption_id, user_id, type_id, amount, description, created_at, goal_id, group_consumption_id;
             """,
             (
                 ledger_data.type_id,
@@ -336,11 +338,15 @@ def update_consumption(record_id: int, ledger_data: LedgerUpdate, conn=Depends(g
         )
         updated = cursor.fetchone()
 
+        # Calculate signed amounts for goal progress adjustment
+        previous_signed_amount = -previous_amount if previous_is_expense else previous_amount
+        new_signed_amount = -float(ledger_data.amount) if is_expense else float(ledger_data.amount)
+
         if previous_goal_id == ledger_data.goal_id:
-            _adjust_goal_progress(cursor, ledger_data.goal_id, float(ledger_data.amount) - previous_amount)
+            _adjust_goal_progress(cursor, ledger_data.goal_id, new_signed_amount - previous_signed_amount)
         else:
-            _adjust_goal_progress(cursor, previous_goal_id, -previous_amount)
-            _adjust_goal_progress(cursor, ledger_data.goal_id, float(ledger_data.amount))
+            _adjust_goal_progress(cursor, previous_goal_id, -previous_signed_amount)
+            _adjust_goal_progress(cursor, ledger_data.goal_id, new_signed_amount)
 
         conn.commit()
         return {"status": "success", "message": "記帳已更新", "data": updated}
@@ -378,7 +384,7 @@ def delete_consumption(record_id: int, goal_id: Optional[int] = None, conn=Depen
     try:
         # 撈出金額與種類名稱
         cursor.execute("""
-            SELECT pc.amount, pc.goal_id, et.type_name 
+            SELECT pc.amount, pc.goal_id, et.is_expense
             FROM personal_consumptions pc
             JOIN expense_types et ON pc.type_id = et.type_id
             WHERE pc.consumption_id = %s;
@@ -387,14 +393,16 @@ def delete_consumption(record_id: int, goal_id: Optional[int] = None, conn=Depen
         if not record:
             raise HTTPException(status_code=404, detail="找不到該筆消費紀錄")
 
-        refund_amount = record["amount"]
-        is_income = (record["type_name"] == "額外收入")
+        amount = record["amount"]
+        is_expense = record["is_expense"]
 
         # 刪除紀錄
         cursor.execute("DELETE FROM personal_consumptions WHERE consumption_id = %s;", (record_id,))
 
         target_goal_id = goal_id if goal_id is not None else record["goal_id"]
-        _adjust_goal_progress(cursor, target_goal_id, -float(refund_amount))
+        # Use signed amount for goal progress adjustment
+        signed_amount = -float(amount) if is_expense else float(amount)
+        _adjust_goal_progress(cursor, target_goal_id, -signed_amount)
 
         conn.commit()
         return {"status": "success", "message": "已成功刪除並同步校正目標進度"}

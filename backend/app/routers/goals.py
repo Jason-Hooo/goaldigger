@@ -15,21 +15,12 @@ router = APIRouter(prefix="/goals", tags=["目標管理"])
 def create_goal(goal: GoalCreate, conn=Depends(get_db_connection)): # 💡 改用 Depends
     cursor = conn.cursor()
     try:
-        check_query = """
-            SELECT g.goal_id FROM goals g
-            LEFT JOIN achievements a ON g.goal_id = a.goal_id
-            WHERE g.user_id = %s AND a.goal_id IS NULL;
-        """
-        cursor.execute(check_query, (goal.user_id,))
-        if cursor.fetchone():
-            raise HTTPException(status_code=400, detail="請先完成目前的目標，再建立新的目標")
-
         insert_query = """
-            INSERT INTO goals (user_id, goal_name, description, target_amount, deadline, image_path)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            RETURNING goal_id, user_id, goal_name, description, target_amount, cumulative_amount, deadline, image_path;
+            INSERT INTO goals (user_id, goal_name, description, target_amount, deadline)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING goal_id, user_id, goal_name, description, target_amount, cumulative_amount, deadline;
         """
-        cursor.execute(insert_query, (goal.user_id, goal.goal_name, goal.description, goal.target_amount, goal.deadline, goal.image_path))
+        cursor.execute(insert_query, (goal.user_id, goal.goal_name, goal.description, goal.target_amount, goal.deadline))
         new_goal = cursor.fetchone()
         conn.commit()
         return new_goal
@@ -57,12 +48,22 @@ def get_goal_detail(goal_id: int, conn=Depends(get_db_connection)):
 def achieve_goal(goal_id: int, conn=Depends(get_db_connection)):
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT goal_id, target_amount, cumulative_amount FROM goals WHERE goal_id = %s;", (goal_id,))
+        cursor.execute("SELECT goal_id, target_amount, cumulative_amount, deadline, status FROM goals WHERE goal_id = %s;", (goal_id,))
         goal = cursor.fetchone()
         if not goal:
             raise HTTPException(status_code=404, detail="目標不存在")
         if goal["cumulative_amount"] < goal["target_amount"]:
             raise HTTPException(status_code=400, detail="存錢進度尚未達標，還不能解鎖成就喔！")
+        
+        # Check if goal is already failed or achieved
+        if goal["status"] == "failed":
+            raise HTTPException(status_code=400, detail="目標已過期失敗，無法解鎖成就")
+        if goal["status"] == "achieved":
+            raise HTTPException(status_code=400, detail="目標已經解鎖成就了")
+        
+        # Check if deadline has passed
+        if goal["deadline"] and datetime.now().date() > goal["deadline"]:
+            raise HTTPException(status_code=400, detail="目標已過期失敗，無法解鎖成就")
 
         cursor.execute("""
             INSERT INTO achievements (goal_id, completion_date)
@@ -75,6 +76,13 @@ def achieve_goal(goal_id: int, conn=Depends(get_db_connection)):
         if not achieve_data:
             cursor.execute("SELECT goal_id, completion_date FROM achievements WHERE goal_id = %s;", (goal_id,))
             achieve_data = cursor.fetchone()
+
+        # Update goal status to achieved
+        cursor.execute("""
+            UPDATE goals
+            SET status = 'achieved'
+            WHERE goal_id = %s;
+        """, (goal_id,))
 
         conn.commit()
         return achieve_data
@@ -119,9 +127,6 @@ def update_goal(goal_id: int, payload: GoalUpdate, conn=Depends(get_db_connectio
             payload.target_amount if payload.target_amount is not None else existing["target_amount"]
         )
         updated_deadline = payload.deadline if payload.deadline is not None else existing["deadline"]
-        updated_image_path = (
-            payload.image_path if payload.image_path is not None else existing["image_path"]
-        )
         updated_cumulative_amount = (
             payload.cumulative_amount
             if payload.cumulative_amount is not None
@@ -135,31 +140,21 @@ def update_goal(goal_id: int, payload: GoalUpdate, conn=Depends(get_db_connectio
                 description = %s,
                 target_amount = %s,
                 deadline = %s,
-                image_path = %s,
                 cumulative_amount = %s
             WHERE goal_id = %s
-            RETURNING goal_id, user_id, goal_name, description, target_amount, cumulative_amount, deadline, image_path;
+            RETURNING goal_id, user_id, goal_name, description, target_amount, cumulative_amount, deadline, status;
             """,
             (
                 updated_goal_name,
                 updated_description,
                 updated_target_amount,
                 updated_deadline,
-                updated_image_path,
                 updated_cumulative_amount,
                 goal_id,
             ),
         )
         updated_goal = cursor.fetchone()
-        
-        # 當累積金額達到目標時，自動寫入 achievements 表
-        if updated_cumulative_amount is not None and updated_cumulative_amount >= updated_target_amount:
-            cursor.execute("""
-                INSERT INTO achievements (goal_id, completion_date)
-                VALUES (%s, CURRENT_TIMESTAMP)
-                ON CONFLICT (goal_id) DO NOTHING;
-            """, (goal_id,))
-        
+
         conn.commit()
         return updated_goal
     except HTTPException:

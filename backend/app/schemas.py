@@ -33,7 +33,6 @@ class GoalCreate(BaseModel):
     # Optional 代表選填 (前端不傳也沒關係，會自動變成 None)
     description: Optional[str] = None
     deadline: Optional[date] = None
-    image_path: Optional[str] = None
     
 
 # 這是後端要把「完整的目標資料」回傳給前端時的格式
@@ -45,8 +44,8 @@ class GoalResponse(BaseModel):
     target_amount: float
     cumulative_amount: float
     deadline: Optional[date] = None
-    image_path: Optional[str] = None
     completion_date: Optional[datetime] = None
+    status: Optional[str] = None
 
     class Config:
         from_attributes = True  # 讓 Pydantic 可以順利讀取資料庫撈出來的資料
@@ -61,6 +60,7 @@ class LedgerCreate(BaseModel):
     amount: float = Field(..., gt=0)
     description: Optional[str] = None
     goal_id: Optional[int] = None
+    group_consumption_id: Optional[int] = None
 
 
 class LedgerUpdate(BaseModel):
@@ -91,6 +91,7 @@ class LedgerResponse(BaseModel):
     description: Optional[str] = None  
     created_at: datetime
     goal_id: Optional[int] = None
+    group_consumption_id: Optional[int] = None
     type_name: Optional[str] = None
     is_expense: Optional[bool] = None
 
@@ -127,5 +128,5 @@ class GoalUpdate(BaseModel):
     description: Optional[str] = None
     target_amount: Optional[float] = Field(None, gt=0)
     deadline: Optional[date] = None
-    image_path: Optional[str] = None
     cumulative_amount: Optional[float] = Field(None, ge=0)
+    status: Optional[str] = None

@@ -62,6 +62,7 @@ class LedgerRecord {
     this.typeName,
     this.isExpense,
     this.goalId,
+    this.groupConsumptionId,
   });
 
   final int recordId;
@@ -72,6 +73,7 @@ class LedgerRecord {
   final String? typeName;
   final bool? isExpense;
   final int? goalId;
+  final int? groupConsumptionId;
 
   factory LedgerRecord.fromJson(Map<String, dynamic> json) {
     return LedgerRecord(
@@ -83,6 +85,7 @@ class LedgerRecord {
       typeName: json['type_name'] as String?,
       isExpense: json['is_expense'] as bool?,
       goalId: json['goal_id'] as int?,
+      groupConsumptionId: json['group_consumption_id'] as int?,
     );
   }
 }
@@ -435,6 +438,7 @@ class ApiConnect {
         achievedAt: completionDate == null
             ? null
             : DateTime.parse(completionDate),
+        status: json['status'] as String?,
       );
     }).toList();
     return list;
@@ -470,6 +474,7 @@ class ApiConnect {
             ? deadline
             : DateTime.parse(deadlineValue),
         savedAmount: (body['cumulative_amount'] as num?)?.toDouble() ?? 0,
+        status: body['status'] as String?,
       );
     }
     throw ApiException('新增目標失敗，未取得回傳資料');
@@ -510,6 +515,7 @@ class ApiConnect {
             : DateTime.parse(deadlineValue),
         savedAmount:
             (body['cumulative_amount'] as num?)?.toDouble() ?? savedAmount ?? 0,
+        status: body['status'] as String?,
       );
     }
     throw ApiException('更新目標失敗，未取得回傳資料');
@@ -517,6 +523,11 @@ class ApiConnect {
 
   Future<void> deleteGoal(int goalId) async {
     final response = await http.delete(_buildUri('/goals/$goalId'));
+    _handleResponse(response);
+  }
+
+  Future<void> achieveGoal(int goalId) async {
+    final response = await http.post(_buildUri('/goals/achieve/$goalId'));
     _handleResponse(response);
   }
 

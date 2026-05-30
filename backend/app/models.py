@@ -15,7 +15,6 @@ CREATE TABLE public.consumption_participants (
   consumption_id integer NOT NULL,
   user_id integer NOT NULL,
   is_payer boolean DEFAULT false,
-  sharing_ratio numeric NOT NULL,
   shared_amount numeric NOT NULL,
   status character varying DEFAULT 'pending'::character varying,
   CONSTRAINT consumption_participants_pkey PRIMARY KEY (consumption_id, user_id),
@@ -26,7 +25,6 @@ CREATE TABLE public.expense_types (
   type_id integer NOT NULL DEFAULT nextval('expense_types_type_id_seq'::regclass),
   type_name character varying NOT NULL,
   user_id integer,
-  image_path character varying,
   is_expense boolean DEFAULT true,
   CONSTRAINT expense_types_pkey PRIMARY KEY (type_id)
 );
@@ -38,7 +36,7 @@ CREATE TABLE public.goals (
   target_amount numeric NOT NULL,
   cumulative_amount numeric DEFAULT 0.00,
   deadline date,
-  image_path character varying,
+  status character varying DEFAULT 'active'::character varying,
   CONSTRAINT goals_pkey PRIMARY KEY (goal_id),
   CONSTRAINT goals_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id)
 );
@@ -75,10 +73,12 @@ CREATE TABLE public.personal_consumptions (
   description character varying,
   created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
   goal_id integer,
+  group_consumption_id integer,
   CONSTRAINT personal_consumptions_pkey PRIMARY KEY (consumption_id),
   CONSTRAINT personal_consumptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id),
   CONSTRAINT personal_consumptions_type_id_fkey FOREIGN KEY (type_id) REFERENCES public.expense_types(type_id),
-  CONSTRAINT fk_personal_consumptions_goal FOREIGN KEY (goal_id) REFERENCES public.goals(goal_id)
+  CONSTRAINT fk_personal_consumptions_goal FOREIGN KEY (goal_id) REFERENCES public.goals(goal_id),
+  CONSTRAINT fk_personal_consumptions_group_consumption FOREIGN KEY (group_consumption_id) REFERENCES public.group_consumptions(consumption_id)
 );
 CREATE TABLE public.users (
   user_id integer NOT NULL DEFAULT nextval('users_user_id_seq'::regclass),

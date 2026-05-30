@@ -14,28 +14,48 @@ class GroupDetailPage extends StatefulWidget {
   State<GroupDetailPage> createState() => _GroupDetailPageState();
 }
 
-class _GroupDetailPageState extends State<GroupDetailPage> {
+class _GroupDetailPageState extends State<GroupDetailPage>
+  with RealtimeRefreshMixin<GroupDetailPage> {
   final ApiConnect _api = ApiConnect();
   List<SplitExpense> _expenses = [];
   List<GroupMember> _members = [];
   bool _isLoading = true;
+  bool _isRefreshing = false;
+  bool _hasLoadedOnce = false;
   String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    _loadGroupExpenses();
-    _loadGroupMembers();
+    _loadGroupData();
+    watchTables(
+      channelName: 'group-detail-${widget.group.groupId}',
+      tables: const [
+        'group_members',
+        'group_consumptions',
+        'consumption_participants',
+      ],
+      onChange: () => _loadGroupData(silent: true),
+    );
   }
 
-  Future<void> _loadGroupExpenses() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  Future<void> _loadGroupData({bool silent = false}) async {
+    if (!silent || !_hasLoadedOnce) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    } else if (mounted) {
+      setState(() => _isRefreshing = true);
+    }
 
     try {
-      final allExpenses = await _api.fetchSplitExpenses(widget.user.userId);
+      final results = await Future.wait([
+        _api.fetchSplitExpenses(widget.user.userId),
+        _api.getGroupMembers(widget.group.groupId),
+      ]);
+      final allExpenses = results[0] as List<SplitExpense>;
+      final members = results[1] as List<GroupMember>;
       if (!mounted) {
         return;
       }
@@ -43,6 +63,8 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
         _expenses = allExpenses
             .where((expense) => expense.groupId == widget.group.groupId)
             .toList();
+        _members = members;
+        _hasLoadedOnce = true;
       });
     } catch (error) {
       if (!mounted) {
@@ -51,25 +73,9 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
       setState(() => _errorMessage = _readableError(error));
     } finally {
       if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  Future<void> _loadGroupMembers() async {
-    try {
-      final members = await _api.getGroupMembers(widget.group.groupId);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _members = members;
-      });
-    } catch (error) {
-      // Don't show error for members loading, it's not critical
-      if (mounted) {
         setState(() {
-          _members = [];
+          _isLoading = false;
+          _isRefreshing = false;
         });
       }
     }
@@ -80,6 +86,53 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
       return error.message;
     }
     return '資料讀取失敗，請稍後再試。';
+  }
+
+  SplitExpense _buildOptimisticExpense(_GroupExpenseDraft draft) {
+    final participants = draft.splitDetails.map((detail) {
+      final userId = detail['user_id'] as int;
+      final sharedAmount = (detail['shared_amount'] as num).toDouble();
+      final member = _members.firstWhere(
+        (entry) => entry.userId == userId,
+        orElse: () => GroupMember(userId: userId, userName: '成員'),
+      );
+      return SplitParticipant(
+        userId: userId,
+        userName: member.userName,
+        sharedAmount: sharedAmount,
+        isPayer: userId == draft.payerId,
+        status: 'pending',
+      );
+    }).toList();
+
+    return SplitExpense(
+      consumptionId: draft.consumptionId ?? -DateTime.now().microsecondsSinceEpoch,
+      groupId: draft.groupId,
+      groupName: widget.group.groupName,
+      name: draft.name,
+      amount: draft.amount,
+      createdAt: DateTime.now(),
+      participants: participants,
+    );
+  }
+
+  void _upsertExpense(SplitExpense expense) {
+    setState(() {
+      final nextExpenses = List<SplitExpense>.from(_expenses);
+      final index = nextExpenses.indexWhere((entry) => entry.consumptionId == expense.consumptionId);
+      if (index >= 0) {
+        nextExpenses[index] = expense;
+      } else {
+        nextExpenses.insert(0, expense);
+      }
+      _expenses = nextExpenses;
+    });
+  }
+
+  void _removeExpense(int consumptionId) {
+    setState(() {
+      _expenses = _expenses.where((expense) => expense.consumptionId != consumptionId).toList();
+    });
   }
 
   void _showQRCodeSheet(BuildContext context) {
@@ -325,6 +378,9 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 12),
+                  if (_isRefreshing)
+                    const LinearProgressIndicator(minHeight: 2),
+                  if (_isRefreshing) const SizedBox(height: 12),
                   if (_isLoading)
                     const Center(child: CircularProgressIndicator())
                   else if (_errorMessage != null)
@@ -348,7 +404,7 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
                             Align(
                               alignment: Alignment.centerRight,
                               child: TextButton(
-                                onPressed: _loadGroupExpenses,
+                                onPressed: _loadGroupData,
                                 child: const Text('重試'),
                               ),
                             ),
@@ -370,13 +426,17 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
                       ),
                     )
                   else
-                    ..._expenses.map(
-                      (expense) => _GroupExpenseTile(
-                        expense: expense,
-                        currentUserId: widget.user.userId,
-                        onTap: () => _openExpenseDetail(context, expense),
-                        onDelete: () => _deleteExpense(expense),
-                      ),
+                    Column(
+                      children: _expenses
+                          .map(
+                            (expense) => _GroupExpenseTile(
+                              expense: expense,
+                              currentUserId: widget.user.userId,
+                              onTap: () => _openExpenseDetail(context, expense),
+                              onDelete: () => _deleteExpense(expense),
+                            ),
+                          )
+                          .toList(),
                     ),
                 ],
               ),
@@ -385,6 +445,7 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
         ],
       ),
       floatingActionButton: FloatingActionButton(
+        heroTag: 'fab-split',
         onPressed: () => _openExpenseEditor(context),
         backgroundColor: AppColors.pinkPrimary,
         child: const Icon(Icons.add),
@@ -426,7 +487,7 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
             child: const Text('取消'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.pinkPrimary),
             onPressed: () => Navigator.of(dialogContext).pop(true),
             child: const Text('確認刪除'),
           ),
@@ -438,9 +499,13 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
       return;
     }
 
+    final previousExpenses = List<SplitExpense>.from(_expenses);
+    _removeExpense(expense.consumptionId);
+
     try {
       await _api.deleteSplitExpense(expense.consumptionId);
-      await _loadGroupExpenses();
+      AppRefreshBus.notifyChanged();
+      unawaited(_loadGroupData(silent: true));
       if (!mounted) {
         return;
       }
@@ -451,6 +516,9 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
       if (!mounted) {
         return;
       }
+      setState(() {
+        _expenses = previousExpenses;
+      });
       ScaffoldMessenger.of(context)
         ..clearSnackBars()
         ..showSnackBar(SnackBar(content: Text(_readableError(error))));
@@ -466,8 +534,13 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
         group: widget.group,
         currentUserId: widget.user.userId,
         initialExpense: initialExpense,
-        onSave: () async {
-          await _loadGroupExpenses();
+        onSave: (draft) async {
+          _upsertExpense(_buildOptimisticExpense(draft));
+          try {
+            unawaited(_loadGroupData(silent: true));
+          } catch (_) {
+            // Background refresh errors are intentionally ignored here.
+          }
           if (!mounted) {
             return;
           }
@@ -511,6 +584,43 @@ class _GroupExpenseTile extends StatelessWidget {
         .cast<SplitParticipant?>()
         .firstWhere((p) => p?.userId == currentUserId, orElse: () => null);
     final isPayer = currentUser?.isPayer ?? false;
+    final currentShare = currentUser?.sharedAmount ?? 0;
+
+    // 👇 1. 再次把算錢邏輯搬進來
+    double receivable = 0;
+    double payable = 0;
+
+    if (isPayer) {
+      receivable = expense.participants
+          .where((p) => p.userId != currentUserId && p.status != 'paid')
+          .fold(0.0, (sum, p) => sum + p.sharedAmount);
+    } else {
+      if (currentUser != null && currentUser.status != 'paid') {
+        payable = currentShare;
+      }
+    }
+
+    // 👇 2. 動態決定要顯示的文字跟顏色
+    String statusText;
+    Color statusColor;
+
+    if (isPayer) {
+      if (receivable > 0) {
+        statusText = '待收';
+        statusColor = AppColors.green;
+      } else {
+        statusText = '已收齊'; // 錢收齊了！
+        statusColor = const Color.fromARGB(255, 19, 16, 202); // 變成低調的灰色
+      }
+    } else {
+      if (payable > 0) {
+        statusText = '待付';
+        statusColor = AppColors.pinkPrimary;
+      } else {
+        statusText = '已還款'; // 錢付清了！
+        statusColor = const Color.fromARGB(255, 19, 16, 202); // 變成低調的灰色
+      }
+    }
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -536,9 +646,9 @@ class _GroupExpenseTile extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              isPayer ? '待收' : '待付',
+              statusText,
               style: TextStyle(
-                color: isPayer ? AppColors.green : AppColors.pinkPrimary,
+                color: statusColor,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -785,7 +895,7 @@ class _GroupExpenseEditorSheet extends StatefulWidget {
   final GroupSummary group;
   final int currentUserId;
   final SplitExpense? initialExpense;
-  final Future<void> Function() onSave;
+  final Future<void> Function(_GroupExpenseDraft) onSave;
 
   @override
   State<_GroupExpenseEditorSheet> createState() => _GroupExpenseEditorSheetState();
@@ -957,7 +1067,18 @@ class _GroupExpenseEditorSheetState extends State<_GroupExpenseEditorSheet> {
           splitDetails: splitDetails,
         );
       }
-      await widget.onSave();
+      AppRefreshBus.notifyChanged();
+      await widget.onSave(
+        _GroupExpenseDraft(
+          consumptionId: widget.initialExpense?.consumptionId,
+          groupId: widget.group.groupId,
+          name: name,
+          amount: amount,
+          payerId: widget.currentUserId,
+          typeId: _selectedTypeId,
+          splitDetails: splitDetails,
+        ),
+      );
     } catch (error) {
       if (!mounted) {
         return;
@@ -1195,8 +1316,12 @@ class _SplitPageState extends State<SplitPage> {
 
   Future<void> _loadSplits() async {
     try {
-      final groups = await _api.fetchGroups(widget.user.userId);
-      final expenses = await _api.fetchSplitExpenses(widget.user.userId);
+      final results = await Future.wait([
+        _api.fetchGroups(widget.user.userId),
+        _api.fetchSplitExpenses(widget.user.userId),
+      ]);
+      final groups = results[0] as List<GroupSummary>;
+      final expenses = results[1] as List<SplitExpense>;
       if (!mounted) {
         return;
       }
@@ -1233,10 +1358,25 @@ class _SplitPageState extends State<SplitPage> {
 
     final isPayer = current?.isPayer ?? false;
     final currentShare = current?.sharedAmount ?? 0;
-    final receivable = expense.amount - currentShare;
+
+    double receivable = 0;
+    double payable = 0;
+
+    if (isPayer) {
+      // 待收：所有「不是我」且「尚未還款 (status != 'paid')」的金額加總
+      receivable = participants
+          .where((p) => p.userId != currentUserId && p.status != 'paid')
+          .fold(0.0, (sum, p) => sum + p.sharedAmount);
+    } else {
+      // 待付：如果我還沒還款，待付就是我的份額；如果已經還了，就是 0
+      if (current != null && current.status != 'paid') {
+        payable = currentShare;
+      }
+    }
+
     final amountLabel = isPayer
         ? '待收 \$${_formatSplitAmount(receivable)}'
-        : '待付 \$${_formatSplitAmount(currentShare)}';
+        : '待付 \$${_formatSplitAmount(payable)}';
 
     return SplitItem(
       consumptionId: expense.consumptionId,
@@ -1354,7 +1494,7 @@ class _SplitPageState extends State<SplitPage> {
           user: widget.user,
         ),
       ),
-    );
+    ).then((_) => _loadSplits());
   }
 
   Future<void> _openEditorSheet(
@@ -1369,7 +1509,12 @@ class _SplitPageState extends State<SplitPage> {
         availableGroups: _groups,
         currentUserId: widget.user.userId,
         presetGroupMode: presetGroupMode,
-        onSave: _submitGroup,
+        onSave: (draft) async {
+          await _submitGroup(draft);
+          if (mounted) {
+            Navigator.pop(sheetContext);
+          }
+        },
       ),
     );
   }
@@ -1378,10 +1523,18 @@ class _SplitPageState extends State<SplitPage> {
     try {
       if (draft.groupMode == '建立群組') {
         // When creating, only add the current user
-        await _api.createGroup(
+        final createdGroup = await _api.createGroup(
           groupName: draft.groupName,
           userIds: [widget.user.userId],
         );
+        if (mounted) {
+          setState(() {
+            _groups = [
+              createdGroup,
+              ..._groups.where((group) => group.groupId != createdGroup.groupId),
+            ];
+          });
+        }
       } else {
         if (draft.invitationCode == null) {
           _showSnackBar(context, '請輸入邀請碼');
@@ -1392,9 +1545,9 @@ class _SplitPageState extends State<SplitPage> {
           invitationCode: draft.invitationCode!,
           userId: widget.user.userId,
         );
+        await _loadSplits();
       }
 
-      await _loadSplits();
       if (!mounted) {
         return;
       }
@@ -1486,6 +1639,26 @@ class _GroupDraft {
   final List<int> memberIds;
 }
 
+class _GroupExpenseDraft {
+  const _GroupExpenseDraft({
+    this.consumptionId,
+    required this.groupId,
+    required this.name,
+    required this.amount,
+    required this.payerId,
+    this.typeId,
+    required this.splitDetails,
+  });
+
+  final int? consumptionId;
+  final int groupId;
+  final String name;
+  final double amount;
+  final int payerId;
+  final int? typeId;
+  final List<Map<String, dynamic>> splitDetails;
+}
+
 class _GroupEditorSheet extends StatefulWidget {
   const _GroupEditorSheet({
     required this.availableGroups,
@@ -1495,7 +1668,7 @@ class _GroupEditorSheet extends StatefulWidget {
   });
 
   final String? presetGroupMode;
-  final ValueChanged<_GroupDraft> onSave;
+  final Future<void> Function(_GroupDraft) onSave;
   final List<GroupSummary> availableGroups;
   final int currentUserId;
 
@@ -1741,8 +1914,8 @@ class _GroupEditorSheetState extends State<_GroupEditorSheet> {
             groupName: _groupNameController.text.trim(),
             memberIds: _parseMemberIds(_membersController.text),
           );
+          // Don't pop here - let the onSave callback handle it after API call completes
           widget.onSave(draft);
-          Navigator.pop(context);
         }
       }
     });
@@ -1766,8 +1939,8 @@ class _GroupEditorSheetState extends State<_GroupEditorSheet> {
       memberIds: memberIds,
     );
 
-    widget.onSave(draft);
-    Navigator.pop(context);
+    await widget.onSave(draft);
+    // Don't pop here - parent handles sheet closing
   }
 
   @override
@@ -2572,9 +2745,7 @@ class _SplitDraft {
   final int? groupId;
 }
 
-String _extractAmount(String amountText) {
-  return amountText.replaceAll(RegExp(r'[^0-9.]'), '');
-}
+
 
 String _formatSplitAmount(double value) {
   final fixed = value.toStringAsFixed(2);
@@ -2589,15 +2760,7 @@ String _formatSplitAmount(double value) {
   return '$integer.${parts[1]}';
 }
 
-String _splitIconName(IconData icon) {
-  return switch (icon) {
-    Icons.flight_takeoff => '旅行',
-    Icons.shopping_cart => '採買',
-    Icons.group => '群組',
-    Icons.local_cafe => '咖啡',
-    _ => '群組',
-  };
-}
+
 
 IconData _splitIconForName(String name) {
   return switch (name) {
