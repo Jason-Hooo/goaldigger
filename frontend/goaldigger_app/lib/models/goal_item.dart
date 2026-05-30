@@ -9,6 +9,7 @@ class GoalItem {
     required this.deadline,
     this.savedAmount = 0,
     this.achievedAt,
+    this.status,
   });
 
   final int? goalId;
@@ -18,8 +19,11 @@ class GoalItem {
   final DateTime deadline;
   final double savedAmount;
   final DateTime? achievedAt;
+  final String? status;
 
-  bool get isAchieved => achievedAt != null || progress >= 1;
+  bool get isAchieved => achievedAt != null || status == 'achieved';
+  bool get isFailed => status == 'failed' || (deadline.isBefore(DateTime.now()) && !isAchieved);
+  bool get canAchieve => progress >= 1 && !isAchieved && !isFailed && !deadline.isBefore(DateTime.now());
 
   String get achievedAtLabel {
     final achievedAt = this.achievedAt;
@@ -37,8 +41,7 @@ class GoalItem {
   }
 
   double get remainingAmount {
-    final remaining = targetAmount - savedAmount;
-    return remaining < 0 ? 0 : remaining;
+    return targetAmount - savedAmount;
   }
 
   String get deadlineLabel {
@@ -61,6 +64,7 @@ class GoalItem {
     DateTime? deadline,
     double? savedAmount,
     DateTime? achievedAt,
+    String? status,
   }) {
     return GoalItem(
       goalId: goalId ?? this.goalId,
@@ -70,6 +74,7 @@ class GoalItem {
       deadline: deadline ?? this.deadline,
       savedAmount: savedAmount ?? this.savedAmount,
       achievedAt: achievedAt ?? this.achievedAt,
+      status: status ?? this.status,
     );
   }
 }

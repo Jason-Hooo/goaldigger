@@ -9,13 +9,16 @@ class StatsPage extends StatefulWidget {
   State<StatsPage> createState() => _StatsPageState();
 }
 
-class _StatsPageState extends State<StatsPage> {
+class _StatsPageState extends State<StatsPage>
+    with RealtimeRefreshMixin<StatsPage> {
   final ApiConnect _api = ApiConnect();
   late final DateTime _today;
   List<_MonthlyData> _monthlyData = [];
   List<_CategoryData> _categoryData = [];
   List<_TransactionData> _recentTransactions = [];
   bool _isLoading = true;
+  bool _isRefreshing = false;
+  bool _hasLoadedOnce = false;
   String? _errorMessage;
 
   @override
@@ -23,18 +26,46 @@ class _StatsPageState extends State<StatsPage> {
     super.initState();
     _today = DateTime.now();
     _loadStats();
+    AppRefreshBus.tick.addListener(_onAppDataChanged);
+    watchTables(
+      channelName: 'stats-${widget.user.userId}',
+      tables: const ['personal_consumptions', 'expense_types'],
+      onChange: () => _loadStats(silent: true),
+    );
   }
 
-  Future<void> _loadStats() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  void _onAppDataChanged() {
+    if (!mounted) {
+      return;
+    }
+    _loadStats(silent: true);
+  }
+
+  @override
+  void dispose() {
+    AppRefreshBus.tick.removeListener(_onAppDataChanged);
+    super.dispose();
+  }
+
+  Future<void> _loadStats({bool silent = false}) async {
+    if (!silent || !_hasLoadedOnce) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    } else if (mounted) {
+      setState(() => _isRefreshing = true);
+    }
 
     try {
-      final types = await _api.fetchExpenseTypes(widget.user.userId);
-      final records = await _api.fetchLedgerHistory(widget.user.userId, limit: 300);
-      final categoryStats = await _api.fetchCategoryStats(widget.user.userId);
+      final results = await Future.wait([
+        _api.fetchExpenseTypes(widget.user.userId),
+        _api.fetchLedgerHistory(widget.user.userId, limit: 300),
+        _api.fetchCategoryStats(widget.user.userId),
+      ]);
+      final types = results[0] as List<ExpenseType>;
+      final records = results[1] as List<LedgerRecord>;
+      final categoryStats = results[2] as List<CategoryStat>;
 
       if (!mounted) {
         return;
@@ -48,6 +79,7 @@ class _StatsPageState extends State<StatsPage> {
         _monthlyData = monthlyData;
         _categoryData = categoryData;
         _recentTransactions = recentTransactions;
+        _hasLoadedOnce = true;
       });
     } catch (error) {
       if (!mounted) {
@@ -56,7 +88,10 @@ class _StatsPageState extends State<StatsPage> {
       setState(() => _errorMessage = _readableError(error));
     } finally {
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+          _isRefreshing = false;
+        });
       }
     }
   }
@@ -126,6 +161,8 @@ class _StatsPageState extends State<StatsPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 12),
+            if (_isRefreshing) const LinearProgressIndicator(minHeight: 2),
+            if (_isRefreshing) const SizedBox(height: 12),
             _OverviewCard(currentMonth: _currentMonth),
             const SizedBox(height: 16),
             _CategoryBreakdownCard(categoryData: _categoryData),

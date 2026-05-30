@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Query
-from typing import List, Dict
+from typing import List, Dict, Optional
 from pydantic import BaseModel
 import secrets
 import string
@@ -18,6 +18,75 @@ def generate_invitation_code():
         # Check if code already exists
         # This will be checked in the create_group function
         return code
+
+
+def _resolve_personal_type_id(cursor, type_id: Optional[int]) -> int:
+    """Return a valid expense type id for mirrored personal consumptions."""
+    if type_id is not None:
+        cursor.execute(
+            "SELECT type_id FROM expense_types WHERE type_id = %s;",
+            (type_id,)
+        )
+        existing = cursor.fetchone()
+        if existing:
+            return existing["type_id"]
+        raise HTTPException(status_code=400, detail="找不到對應的支出類別")
+
+    cursor.execute(
+        """
+        SELECT type_id
+        FROM expense_types
+        WHERE is_expense = TRUE
+        ORDER BY CASE WHEN user_id IS NULL THEN 0 ELSE 1 END, type_id ASC
+        LIMIT 1;
+        """
+    )
+    fallback = cursor.fetchone()
+    if not fallback:
+        raise HTTPException(status_code=400, detail="找不到可用的支出類別，請先建立 expense type")
+
+    return fallback["type_id"]
+
+
+def _build_personal_consumption_records(cursor, expense: ExpenseCreate, group_consumption_id: int):
+    """Build mirrored personal consumption rows for a group expense."""
+    records = []
+    type_id = _resolve_personal_type_id(cursor, expense.type_id)
+
+    for detail in expense.split_details:
+        if detail.shared_amount <= 0:
+            continue
+
+        records.append(
+            (
+                detail.user_id,
+                type_id,
+                detail.shared_amount,
+                f"{expense.name} (群組分帳)",
+                group_consumption_id,
+            )
+        )
+
+    return records
+
+
+def _sync_personal_consumptions(cursor, expense: ExpenseCreate, group_consumption_id: int):
+    """Replace mirrored personal consumption rows for a group expense."""
+    cursor.execute(
+        "DELETE FROM personal_consumptions WHERE group_consumption_id = %s;",
+        (group_consumption_id,)
+    )
+
+    personal_records = _build_personal_consumption_records(cursor, expense, group_consumption_id)
+    if personal_records:
+        cursor.executemany(
+            """
+            INSERT INTO personal_consumptions
+            (user_id, type_id, amount, description, created_at, group_consumption_id)
+            VALUES (%s, %s, %s, %s, NOW(), %s);
+            """,
+            personal_records
+        )
 
 
 @router.post("/groups/", status_code=status.HTTP_201_CREATED)
@@ -241,6 +310,7 @@ def get_user_expenses(user_id: int, conn=Depends(get_db_connection)):
                     "user_name": row["user_name"],
                     "shared_amount": float(row["shared_amount"]),
                     "is_payer": row["is_payer"],
+                    "status": row["status"],
                 }
             )
 
@@ -258,43 +328,21 @@ def add_expense(expense: ExpenseCreate, conn=Depends(get_db_connection)):
             (expense.group_id, expense.name, expense.amount, expense.type_id)
         )
         consumption_id = cursor.fetchone()['consumption_id']
-        personal_records = []
 
         # 2. 寫入參與者分帳明細
         for detail in expense.split_details:
             is_payer = (detail.user_id == expense.payer_id)
-            # 簡化計算，這裡假設 sharing_ratio 先用 1 代替，實際金額依前端傳入為主
             cursor.execute(
                 """
                 INSERT INTO consumption_participants
-                (consumption_id, user_id, is_payer, sharing_ratio, shared_amount)
-                VALUES (%s, %s, %s, %s, %s);
+                (consumption_id, user_id, is_payer, shared_amount)
+                VALUES (%s, %s, %s, %s);
                 """,
-                (consumption_id, detail.user_id, is_payer, 1, detail.shared_amount)
+                (consumption_id, detail.user_id, is_payer, detail.shared_amount)
             )
 
-            if detail.shared_amount > 0:
-                # 使用使用者選擇的類別，如果沒有選擇則使用預設的 99
-                type_id = expense.type_id if expense.type_id else 99
-                personal_records.append((
-                    detail.user_id,
-                    type_id,
-                    detail.shared_amount,
-                    f"{expense.name} (群組分帳)"
-                ))
-                
-                # Budget checking logic removed as monthly_financial_info table has been removed
-
-        # 3. 💡 批次將分帳結果同步到每個人的 personal_consumptions
-        if personal_records:
-            cursor.executemany(
-                """
-                INSERT INTO personal_consumptions 
-                (user_id, type_id, amount, description, created_at)
-                VALUES (%s, %s, %s, %s, NOW());
-                """,
-                personal_records
-            )
+        # 3. 同步到每個人的 personal_consumptions
+        _sync_personal_consumptions(cursor, expense, consumption_id)
         
         conn.commit()
         return {"status": "success", "message": "分帳紀錄已新增"}
@@ -309,6 +357,10 @@ def delete_expense(consumption_id: int, conn=Depends(get_db_connection)):
     """刪除群組消費紀錄"""
     cursor = conn.cursor()
     try:
+        cursor.execute(
+            "DELETE FROM personal_consumptions WHERE group_consumption_id = %s;",
+            (consumption_id,)
+        )
         # 先刪除參與者記錄
         cursor.execute(
             "DELETE FROM consumption_participants WHERE consumption_id = %s;",
@@ -348,7 +400,7 @@ def update_expense(consumption_id: int, expense: ExpenseCreate, conn=Depends(get
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="找不到該消費紀錄")
 
-        # 刪除舊的參與者記錄
+        # 刪除舊的參與者記錄，personal mirror 會在 helper 中一併重建
         cursor.execute(
             "DELETE FROM consumption_participants WHERE consumption_id = %s;",
             (consumption_id,)
@@ -360,11 +412,14 @@ def update_expense(consumption_id: int, expense: ExpenseCreate, conn=Depends(get
             cursor.execute(
                 """
                 INSERT INTO consumption_participants
-                (consumption_id, user_id, is_payer, sharing_ratio, shared_amount)
-                VALUES (%s, %s, %s, %s, %s);
+                (consumption_id, user_id, is_payer, shared_amount)
+                VALUES (%s, %s, %s, %s);
                 """,
-                (consumption_id, detail.user_id, is_payer, 1, detail.shared_amount)
+                (consumption_id, detail.user_id, is_payer, detail.shared_amount)
             )
+
+        # 重建同步的 personal_consumptions
+        _sync_personal_consumptions(cursor, expense, consumption_id)
 
         conn.commit()
         return {"status": "success", "message": "已更新消費紀錄"}
@@ -387,7 +442,7 @@ def settle_group_expenses(group_id: int, conn=Depends(get_db_connection)):
         # 只考慮 status = 'pending' 的參與者
         sql_query = """
             WITH UserPaid AS (
-                SELECT cp.user_id, SUM(gc.amount) as total_paid
+                SELECT cp.user_id, SUM(cp.shared_amount) as total_paid
                 FROM consumption_participants cp
                 JOIN group_consumptions gc ON cp.consumption_id = gc.consumption_id
                 WHERE gc.group_id = %s

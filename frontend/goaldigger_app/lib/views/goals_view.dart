@@ -28,31 +28,44 @@ class _GoalsPageState extends State<GoalsPage> {
       _goals.fold<double>(0, (sum, item) => sum + item.savedAmount);
 
   double get _overallProgress {
-    if (_totalTarget <= 0) {
+    if (_goals.isEmpty) {
       return 0;
     }
-    return _totalSaved / _totalTarget;
+    final totalProgress = _goals.fold<double>(
+      0,
+      (sum, item) => sum + item.progress,
+    );
+    return totalProgress / _goals.length;
   }
 
   @override
   void initState() {
     super.initState();
     _loadGoals();
+    AppRefreshBus.tick.addListener(_onAppRefresh);
+  }
+
+  void _onAppRefresh() {
+    // Silent reload when other parts changed (types/ledger)
+    if (mounted) {
+      unawaited(_loadGoals(silent: true));
+    }
   }
 
 
-  Future<void> _loadGoals() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  Future<void> _loadGoals({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
 
     try {
       final goals = await _api.fetchGoals(widget.user.userId);
-      if (!mounted) {
-        return;
+      if (mounted) {
+        setState(() => _goals = goals);
       }
-      setState(() => _goals = goals);
     } catch (error) {
       if (!mounted) {
         return;
@@ -174,6 +187,7 @@ class _GoalsPageState extends State<GoalsPage> {
           bottom: 20,
           child: SafeArea(
             child: FloatingActionButton(
+              heroTag: 'fab-goals',
               onPressed: () => _openGoalEditor(context),
               backgroundColor: AppColors.pinkPrimary,
               child: const Icon(Icons.add),
@@ -204,9 +218,16 @@ class _GoalsPageState extends State<GoalsPage> {
             Navigator.pop(sheetContext);
             _applyGoalAdjustment(goal, delta);
           },
+          onAchieve: () async {
+            await _achieveGoal(goal);
+            if (sheetContext.mounted) {
+              Navigator.pop(sheetContext);
+            }
+          },
         );
       },
     );
+    // Optimistic updates handle state; avoid forcing a full reload on sheet close
   }
 
   void _openAchievedGoalDetail(BuildContext context, GoalItem goal) {
@@ -224,6 +245,7 @@ class _GoalsPageState extends State<GoalsPage> {
         );
       },
     );
+    // Optimistic updates handle state; avoid forcing a full reload on sheet close
   }
 
   Future<void> _openGoalEditor(
@@ -251,6 +273,10 @@ class _GoalsPageState extends State<GoalsPage> {
   }
 
   Future<void> _createGoal(GoalItem goal) async {
+    // Optimistic create: insert a local draft, then call API
+    final tempGoal = goal.copyWith(goalId: -DateTime.now().microsecondsSinceEpoch);
+    setState(() => _goals.insert(0, tempGoal));
+
     try {
       final created = await _api.createGoal(
         userId: widget.user.userId,
@@ -267,15 +293,19 @@ class _GoalsPageState extends State<GoalsPage> {
         );
       }
 
-      await _loadGoals();
-      if (!mounted) {
-        return;
-      }
+      // replace temp with created
+      if (!mounted) return;
+      setState(() {
+        final idx = _goals.indexWhere((g) => g.goalId == tempGoal.goalId);
+        if (idx >= 0) {
+          _goals[idx] = created;
+        }
+      });
+      AppRefreshBus.notifyChanged();
       _showSnackBar(context, '已新增目標：${goal.title}');
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
+      setState(() => _goals.removeWhere((g) => g.goalId == tempGoal.goalId));
       _showSnackBar(context, _readableError(error));
     }
   }
@@ -285,9 +315,15 @@ class _GoalsPageState extends State<GoalsPage> {
       _showSnackBar(context, '缺少目標編號，無法更新。');
       return;
     }
+    // Optimistic update
+    final prevGoals = List<GoalItem>.from(_goals);
+    final idx = _goals.indexWhere((g) => g.goalId == goal.goalId);
+    if (idx >= 0) {
+      setState(() => _goals[idx] = goal);
+    }
 
     try {
-      await _api.updateGoal(
+      final updated = await _api.updateGoal(
         goalId: goal.goalId!,
         title: goal.title,
         description: goal.description,
@@ -295,15 +331,16 @@ class _GoalsPageState extends State<GoalsPage> {
         deadline: goal.deadline,
         savedAmount: goal.savedAmount,
       );
-      await _loadGoals();
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
+      setState(() {
+        final pos = _goals.indexWhere((g) => g.goalId == updated.goalId);
+        if (pos >= 0) _goals[pos] = updated;
+      });
+      AppRefreshBus.notifyChanged();
       _showSnackBar(context, '已更新目標：${goal.title}');
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
+      setState(() => _goals = prevGoals);
       _showSnackBar(context, _readableError(error));
     }
   }
@@ -325,7 +362,7 @@ class _GoalsPageState extends State<GoalsPage> {
             child: const Text('取消'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.pinkPrimary),
             onPressed: () => Navigator.of(dialogContext).pop(true),
             child: const Text('確認刪除'),
           ),
@@ -337,17 +374,16 @@ class _GoalsPageState extends State<GoalsPage> {
       return;
     }
 
+    // Optimistic delete - remove immediately from UI
+    final previous = List<GoalItem>.from(_goals);
+    setState(() => _goals.removeWhere((g) => g.goalId == goal.goalId));
+
     try {
       await _api.deleteGoal(goal.goalId!);
-      await _loadGoals();
-      if (!mounted) {
-        return;
-      }
       _showSnackBar(context, '已刪除 ${goal.title}');
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
+      setState(() => _goals = previous);
       _showSnackBar(context, _readableError(error));
     }
   }
@@ -361,20 +397,52 @@ class _GoalsPageState extends State<GoalsPage> {
     final rawAmount = goal.savedAmount + delta;
     final updatedSavedAmount = rawAmount < 0 ? 0.0 : rawAmount;
 
+    // Optimistic adjust
+    final previous = List<GoalItem>.from(_goals);
+    final idx = _goals.indexWhere((g) => g.goalId == goal.goalId);
+    if (idx >= 0) {
+      final updated = _goals[idx].copyWith(savedAmount: updatedSavedAmount);
+      setState(() => _goals[idx] = updated);
+    }
+
     try {
       await _api.updateGoal(
         goalId: goal.goalId!,
         savedAmount: updatedSavedAmount,
       );
-      await _loadGoals();
-      if (!mounted) {
-        return;
-      }
+      AppRefreshBus.notifyChanged();
       _showSnackBar(context, '${delta >= 0 ? '增加' : '減少'}目標進度：${goal.title}');
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
+      setState(() => _goals = previous);
+      _showSnackBar(context, _readableError(error));
+    }
+  }
+
+  Future<void> _achieveGoal(GoalItem goal) async {
+    if (goal.goalId == null) {
+      _showSnackBar(context, '缺少目標編號，無法解鎖成就。');
+      return;
+    }
+
+    // Optimistic achieve - update goal to achieved status immediately
+    final previous = List<GoalItem>.from(_goals);
+    final idx = _goals.indexWhere((g) => g.goalId == goal.goalId);
+    if (idx >= 0) {
+      final updated = _goals[idx].copyWith(
+        achievedAt: DateTime.now(),
+        status: 'achieved',
+      );
+      setState(() => _goals[idx] = updated);
+    }
+
+    try {
+      await _api.achieveGoal(goal.goalId!);
+      AppRefreshBus.notifyChanged();
+      _showSnackBar(context, '🎉 恭喜！目標已達成！');
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _goals = previous);
       _showSnackBar(context, _readableError(error));
     }
   }
@@ -387,6 +455,7 @@ class _GoalsPageState extends State<GoalsPage> {
 
   @override
   void dispose() {
+    AppRefreshBus.tick.removeListener(_onAppRefresh);
     super.dispose();
   }
 }
@@ -413,11 +482,6 @@ class _GoalSummaryCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('目標總覽', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 8),
-            Text(
-              '\$${totalSaved.toStringAsFixed(0)} / \$${totalTarget.toStringAsFixed(0)}',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -550,31 +614,8 @@ class _AchievedGoalDetailSheet extends StatelessWidget {
           Text('進度 100%'),
           const SizedBox(height: 18),
           ElevatedButton(
-            onPressed: () {
-              showDialog<bool>(
-                context: context,
-                builder: (dialogContext) => AlertDialog(
-                  title: const Text('刪除目標'),
-                  content: Text('確定要刪除「${goal.title}」嗎？\n這個操作無法復原。'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(false),
-                      child: const Text('取消'),
-                    ),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                      onPressed: () => Navigator.of(dialogContext).pop(true),
-                      child: const Text('確認刪除'),
-                    ),
-                  ],
-                ),
-              ).then((confirmed) {
-                if (confirmed == true) {
-                  onDelete();
-                }
-              });
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: onDelete,
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.pinkPrimary),
             child: const Text('刪除目標'),
           ),
         ],
@@ -589,12 +630,14 @@ class _GoalDetailSheet extends StatefulWidget {
     required this.onEdit,
     required this.onDelete,
     required this.onAdjust,
+    required this.onAchieve,
   });
 
   final GoalItem goal;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final ValueChanged<double> onAdjust;
+  final VoidCallback onAchieve;
 
   @override
   State<_GoalDetailSheet> createState() => _GoalDetailSheetState();
@@ -642,6 +685,21 @@ class _GoalDetailSheetState extends State<_GoalDetailSheet> {
                 widget.goal.description,
                 style: const TextStyle(color: AppColors.inkLight),
               ),
+              const SizedBox(height: 12),
+              if (widget.goal.isFailed)
+                Card(
+                  color: AppColors.pinkSoft,
+                  child: const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Icon(Icons.error_outline, color: AppColors.pinkPrimary),
+                        SizedBox(width: 8),
+                        Expanded(child: Text('目標已過期失敗，無法解鎖成就')),
+                      ],
+                    ),
+                  ),
+                ),
               const SizedBox(height: 18),
               _DetailRow(label: '期限', value: widget.goal.deadlineLabel),
               _DetailRow(label: '目標金額', value: widget.goal.targetAmountLabel),
@@ -662,49 +720,51 @@ class _GoalDetailSheetState extends State<_GoalDetailSheet> {
               const SizedBox(height: 8),
               Text('目前進度 ${widget.goal.progressLabel}'),
               const SizedBox(height: 18),
-              TextFormField(
-                controller: _amountController,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(
-                  labelText: '調整金額',
-                  hintText: '例如 100',
-                ),
-                validator: (value) {
-                  final amount = double.tryParse(
-                    (value ?? '').trim().replaceAll(',', ''),
-                  );
-                  if (amount == null) {
-                    return '請輸入數字';
-                  }
-                  if (amount <= 0) {
-                    return '金額必須大於 0';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _increaseProgress,
-                      icon: const Icon(Icons.add),
-                      label: const Text('增加進度'),
-                    ),
+              if (!widget.goal.isFailed)
+                TextFormField(
+                  controller: _amountController,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _decreaseProgress,
-                      icon: const Icon(Icons.remove),
-                      label: const Text('減少進度'),
-                    ),
+                  decoration: const InputDecoration(
+                    labelText: '調整金額',
+                    hintText: '例如 100',
                   ),
-                ],
-              ),
-              const SizedBox(height: 14),
+                  validator: (value) {
+                    final amount = double.tryParse(
+                      (value ?? '').trim().replaceAll(',', ''),
+                    );
+                    if (amount == null) {
+                      return '請輸入數字';
+                    }
+                    if (amount <= 0) {
+                      return '金額必須大於 0';
+                    }
+                    return null;
+                  },
+                ),
+              if (!widget.goal.isFailed) const SizedBox(height: 14),
+              if (!widget.goal.isFailed)
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _increaseProgress,
+                        icon: const Icon(Icons.add),
+                        label: const Text('增加進度'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _decreaseProgress,
+                        icon: const Icon(Icons.remove),
+                        label: const Text('減少進度'),
+                      ),
+                    ),
+                  ],
+                ),
+              if (!widget.goal.isFailed) const SizedBox(height: 14),
               Row(
                 children: [
                   Expanded(
@@ -722,6 +782,22 @@ class _GoalDetailSheetState extends State<_GoalDetailSheet> {
                   ),
                 ],
               ),
+              if (widget.goal.canAchieve)
+                Padding(
+                  padding: const EdgeInsets.only(top: 14),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: widget.onAchieve,
+                      icon: const Icon(Icons.emoji_events),
+                      label: const Text('解鎖成就'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.green,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -745,7 +821,6 @@ class _GoalDetailSheetState extends State<_GoalDetailSheet> {
       return;
     }
 
-    Navigator.pop(context);
     widget.onAdjust(amount);
   }
 
@@ -764,7 +839,6 @@ class _GoalDetailSheetState extends State<_GoalDetailSheet> {
       return;
     }
 
-    Navigator.pop(context);
     widget.onAdjust(-amount);
   }
 }
@@ -800,7 +874,7 @@ class _GoalEditorSheetState extends State<_GoalEditorSheet> {
       text: widget.initialGoal?.targetAmount.toStringAsFixed(0) ?? '',
     );
     _savedAmountController = TextEditingController(
-      text: widget.initialGoal?.savedAmount.toStringAsFixed(0) ?? '0',
+      text: widget.initialGoal?.savedAmount.toStringAsFixed(0) ?? '',
     );
     _deadline =
         widget.initialGoal?.deadline ??

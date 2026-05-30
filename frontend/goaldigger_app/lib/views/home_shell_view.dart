@@ -10,6 +10,79 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
+class _HomeShellState extends State<HomeShell> {
+  int _index = 0;
+
+  late final List<Widget> _pages = [
+    LedgerPage(user: widget.user),
+    GoalsPage(user: widget.user),
+    StatsPage(user: widget.user),
+    SplitPage(user: widget.user),
+    SettingsPage(onLogout: widget.onLogout, user: widget.user),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        children: [
+          const PinkBackground(),
+          SafeArea(
+            child: IndexedStack(
+              index: _index,
+              children: _pages,
+            ),
+          ),
+        ],
+      ),
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          boxShadow: [
+            BoxShadow(
+              color: Color(0x14000000),
+              blurRadius: 14,
+              offset: Offset(0, -6),
+            ),
+          ],
+        ),
+        child: BottomNavigationBar(
+          currentIndex: _index,
+          onTap: (value) => setState(() => _index = value),
+          type: BottomNavigationBarType.fixed,
+          selectedItemColor: AppColors.pinkPrimary,
+          unselectedItemColor: AppColors.inkLight,
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          items: const [
+            BottomNavigationBarItem(
+              icon: Icon(Icons.receipt_long),
+              label: '記帳',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.flag_rounded),
+              label: '目標',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.bar_chart_rounded),
+              label: '報表',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.group_rounded),
+              label: '分帳',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.settings_rounded),
+              label: '設定',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.onLogout, required this.user});
 
@@ -77,35 +150,70 @@ class _SettingsPageState extends State<SettingsPage> {
       return;
     }
 
-    try {
-      if (initialType == null) {
-        await _api.createExpenseType(
+    // Optimistic create/update
+    if (initialType == null) {
+      // create temp
+      final temp = ExpenseType(
+        id: -DateTime.now().microsecondsSinceEpoch,
+        name: result['type_name'] as String,
+        isExpense: result['is_expense'] as bool,
+        ownerUserId: widget.user.userId,
+      );
+      setState(() => _expenseTypes.insert(0, temp));
+      AppRefreshBus.notifyChanged();
+
+      try {
+        final created = await _api.createExpenseType(
           userId: widget.user.userId,
           typeName: result['type_name'] as String,
           isExpense: result['is_expense'] as bool,
         );
-      } else {
-        await _api.updateExpenseType(
+        if (!mounted) return;
+        setState(() {
+          final idx = _expenseTypes.indexWhere((t) => t.id == temp.id);
+          if (idx >= 0) _expenseTypes[idx] = created;
+        });
+        AppRefreshBus.notifyChanged();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已新增自訂類別')));
+      } catch (error) {
+        if (!mounted) return;
+        setState(() => _expenseTypes.removeWhere((t) => t.id == temp.id));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_readableError(error))));
+      }
+    } else {
+      final prev = List<ExpenseType>.from(_expenseTypes);
+      setState(() {
+        final idx = _expenseTypes.indexWhere((t) => t.id == initialType.id);
+        if (idx >= 0) {
+          _expenseTypes[idx] = ExpenseType(
+            id: initialType.id,
+            name: result['type_name'] as String,
+            isExpense: result['is_expense'] as bool,
+            ownerUserId: initialType.ownerUserId,
+          );
+        }
+      });
+      AppRefreshBus.notifyChanged();
+
+      try {
+        final updated = await _api.updateExpenseType(
           typeId: initialType.id,
           userId: widget.user.userId,
           typeName: result['type_name'] as String,
           isExpense: result['is_expense'] as bool,
         );
+        if (!mounted) return;
+        setState(() {
+          final idx = _expenseTypes.indexWhere((t) => t.id == updated.id);
+          if (idx >= 0) _expenseTypes[idx] = updated;
+        });
+        AppRefreshBus.notifyChanged();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已更新類別')));
+      } catch (error) {
+        if (!mounted) return;
+        setState(() => _expenseTypes = prev);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_readableError(error))));
       }
-      await _loadExpenseTypes();
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(initialType == null ? '已新增自訂類別' : '已更新類別')),
-      );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_readableError(error))),
-      );
     }
   }
 
@@ -121,7 +229,7 @@ class _SettingsPageState extends State<SettingsPage> {
             child: const Text('取消'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.pinkPrimary),
             onPressed: () => Navigator.of(dialogContext).pop(true),
             child: const Text('刪除'),
           ),
@@ -133,25 +241,22 @@ class _SettingsPageState extends State<SettingsPage> {
       return;
     }
 
+    // Optimistic delete
+    final previous = List<ExpenseType>.from(_expenseTypes);
+    setState(() => _expenseTypes.removeWhere((t) => t.id == type.id));
+    AppRefreshBus.notifyChanged();
+
     try {
       await _api.deleteExpenseType(
         typeId: type.id,
         userId: widget.user.userId,
       );
-      await _loadExpenseTypes();
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已刪除自訂類別')),
-      );
+      AppRefreshBus.notifyChanged();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已刪除自訂類別')));
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_readableError(error))),
-      );
+      if (!mounted) return;
+      setState(() => _expenseTypes = previous);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_readableError(error))));
     }
   }
 

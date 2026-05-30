@@ -246,6 +246,60 @@ class GoalTile extends StatelessWidget {
                   ),
                 ),
               ],
+              if (item.isFailed) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.pinkSoft,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.error_outline, size: 16, color: AppColors.pinkPrimary),
+                      SizedBox(width: 4),
+                      Text(
+                        '已過期失敗',
+                        style: TextStyle(
+                          color: AppColors.pinkPrimary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (item.canAchieve) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.green.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.emoji_events, size: 16, color: AppColors.green),
+                      SizedBox(width: 4),
+                      Text(
+                        '可解鎖成就',
+                        style: TextStyle(
+                          color: AppColors.green,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         ),

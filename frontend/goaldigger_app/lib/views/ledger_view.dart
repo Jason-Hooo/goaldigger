@@ -15,6 +15,8 @@ class _LedgerPageState extends State<LedgerPage> {
   List<ExpenseType> _expenseTypes = [];
   List<GoalItem> _goals = [];
   bool _isLoading = true;
+  bool _isRefreshing = false;
+  bool _hasLoadedOnce = false;
   String? _errorMessage;
 
   double get _incomeTotal => _items
@@ -31,21 +33,34 @@ class _LedgerPageState extends State<LedgerPage> {
   void initState() {
     super.initState();
     _loadLedger();
+    AppRefreshBus.tick.addListener(_onAppRefresh);
   }
 
-  Future<void> _loadLedger() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  void _onAppRefresh() {
+    if (mounted) {
+      unawaited(_loadLedger(silent: true));
+    }
+  }
+
+  Future<void> _loadLedger({bool silent = false}) async {
+    if (!silent || !_hasLoadedOnce) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    } else if (mounted) {
+      setState(() => _isRefreshing = true);
+    }
 
     try {
-      final types = await _api.fetchExpenseTypes(widget.user.userId);
-      final goals = await _api.fetchGoals(widget.user.userId);
-      final records = await _api.fetchLedgerHistory(
-        widget.user.userId,
-        limit: 80,
-      );
+      final results = await Future.wait([
+        _api.fetchExpenseTypes(widget.user.userId),
+        _api.fetchGoals(widget.user.userId),
+        _api.fetchLedgerHistory(widget.user.userId, limit: 80),
+      ]);
+      final types = results[0] as List<ExpenseType>;
+      final goals = results[1] as List<GoalItem>;
+      final records = results[2] as List<LedgerRecord>;
       if (!mounted) {
         return;
       }
@@ -54,6 +69,7 @@ class _LedgerPageState extends State<LedgerPage> {
         _expenseTypes = types;
         _goals = goals;
         _items = records.map((record) => _mapLedgerItem(record)).toList();
+        _hasLoadedOnce = true;
       });
     } catch (error) {
       if (!mounted) {
@@ -62,7 +78,10 @@ class _LedgerPageState extends State<LedgerPage> {
       setState(() => _errorMessage = _readableError(error));
     } finally {
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+          _isRefreshing = false;
+        });
       }
     }
   }
@@ -96,6 +115,44 @@ class _LedgerPageState extends State<LedgerPage> {
     );
   }
 
+  LedgerRecord _buildOptimisticLedgerRecord(
+    _LedgerDraft draft, {
+    int? recordId,
+    DateTime? createdAt,
+  }) {
+    return LedgerRecord(
+      recordId: recordId ?? -DateTime.now().microsecondsSinceEpoch,
+      typeId: draft.typeId,
+      amount: draft.amount,
+      createdAt: createdAt ?? DateTime.now(),
+      description: draft.description,
+      typeName: null,
+      isExpense: !draft.isIncome,
+      goalId: draft.goalId,
+    );
+  }
+
+  void _upsertLedgerItem(LedgerItem item, {bool isNew = false}) {
+    setState(() {
+      final nextItems = List<LedgerItem>.from(_items);
+      final existingIndex = nextItems.indexWhere((entry) => entry.recordId == item.recordId);
+      if (existingIndex >= 0) {
+        nextItems[existingIndex] = item;
+      } else if (isNew) {
+        nextItems.insert(0, item);
+      } else {
+        nextItems.insert(0, item);
+      }
+      _items = nextItems;
+    });
+  }
+
+  void _removeLedgerItem(int recordId) {
+    setState(() {
+      _items = _items.where((item) => item.recordId != recordId).toList();
+    });
+  }
+
   String _readableError(Object error) {
     if (error is ApiException) {
       return error.message;
@@ -104,8 +161,9 @@ class _LedgerPageState extends State<LedgerPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Stack(
+Widget build(BuildContext context) {
+  return SizedBox.expand( // 👈 關鍵：強制讓整個 Stack 佔滿全螢幕高度
+    child: Stack(
       children: [
         _PageScaffold(
           title: '記帳',
@@ -167,11 +225,17 @@ class _LedgerPageState extends State<LedgerPage> {
                   ),
                 )
               else
-                ..._items.map(
-                  (item) => LedgerTile(
-                    item: item,
-                    onTap: () => _openDetailSheet(context, item),
-                  ),
+                Column(
+                  children: [
+                    if (_isRefreshing)
+                      const LinearProgressIndicator(minHeight: 2),
+                    ..._items.map(
+                      (item) => LedgerTile(
+                        item: item,
+                        onTap: () => _openDetailSheet(context, item),
+                      ),
+                    ),
+                  ],
                 ),
             ],
           ),
@@ -181,6 +245,7 @@ class _LedgerPageState extends State<LedgerPage> {
           bottom: 20,
           child: SafeArea(
             child: FloatingActionButton(
+              heroTag: 'fab-ledger',
               onPressed: () => _openEntrySheet(context, isIncome: false),
               backgroundColor: AppColors.pinkPrimary,
               child: const Icon(Icons.add),
@@ -188,8 +253,9 @@ class _LedgerPageState extends State<LedgerPage> {
           ),
         ),
       ],
-    );
-  }
+    ),
+  );
+}
 
   void _openDetailSheet(BuildContext context, LedgerItem item) {
     showModalBottomSheet<void>(
@@ -303,6 +369,23 @@ class _LedgerPageState extends State<LedgerPage> {
   }
 
   Future<void> _saveLedger(_LedgerDraft draft) async {
+    final previousItems = List<LedgerItem>.from(_items);
+    DateTime? createdAt;
+    if (draft.recordId != null) {
+      final existingIndex = _items.indexWhere((item) => item.recordId == draft.recordId);
+      if (existingIndex >= 0) {
+        createdAt = _items[existingIndex].recordedAt;
+      }
+    }
+    final optimisticRecord = _buildOptimisticLedgerRecord(
+      draft,
+      recordId: draft.recordId,
+      createdAt: createdAt,
+    );
+    final optimisticItem = _mapLedgerItem(optimisticRecord);
+
+    _upsertLedgerItem(optimisticItem, isNew: draft.recordId == null);
+
     try {
       if (draft.recordId == null) {
         await _api.createLedger(
@@ -322,7 +405,8 @@ class _LedgerPageState extends State<LedgerPage> {
           goalId: draft.goalId,
         );
       }
-      await _loadLedger();
+      AppRefreshBus.notifyChanged();
+      unawaited(_loadLedger(silent: true));
       if (!mounted) {
         return;
       }
@@ -336,6 +420,9 @@ class _LedgerPageState extends State<LedgerPage> {
       if (!mounted) {
         return;
       }
+      setState(() {
+        _items = previousItems;
+      });
       _showSnackBar(context, _readableError(error));
     }
   }
@@ -346,11 +433,18 @@ class _LedgerPageState extends State<LedgerPage> {
       return;
     }
 
+    final previousItems = List<LedgerItem>.from(_items);
+    _removeLedgerItem(item.recordId!);
+
     try {
       await _api.deleteLedger(item.recordId!, goalId: item.goalId);
-      await _loadLedger();
+      AppRefreshBus.notifyChanged();
+      unawaited(_loadLedger(silent: true));
       _showSnackBar(context, '已刪除 ${item.title}');
     } catch (error) {
+      setState(() {
+        _items = previousItems;
+      });
       _showSnackBar(context, _readableError(error));
     }
   }
@@ -480,6 +574,12 @@ class _LedgerEntrySheetState extends State<_LedgerEntrySheet> {
       _selectedTypeId = categories.first.id;
     }
 
+    // Check if linked goal still exists, if not reset to null
+    if (_linkedGoalId != null &&
+        !widget.goals.any((goal) => goal.goalId == _linkedGoalId)) {
+      _linkedGoalId = null;
+    }
+
     return Padding(
       padding: EdgeInsets.fromLTRB(
         20,
@@ -606,7 +706,7 @@ class _LedgerEntrySheetState extends State<_LedgerEntrySheet> {
               const SizedBox(height: 12),
               DropdownButtonFormField<int?>(
                 key: Key('goal-${_linkedGoalId ?? 'none'}'),
-                initialValue: _linkedGoalId,
+                value: _linkedGoalId,
                 decoration: const InputDecoration(labelText: '同步到目標'),
                 items: [
                   const DropdownMenuItem<int?>(
