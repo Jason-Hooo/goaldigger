@@ -433,6 +433,23 @@ Widget build(BuildContext context) {
       return;
     }
 
+    // Check if ledger entry is synced with an achieved goal
+    if (item.goalId != null) {
+      final goal = _goals.firstWhere(
+        (g) => g.goalId == item.goalId,
+        orElse: () => GoalItem(
+          title: '',
+          description: '',
+          targetAmount: 0,
+          deadline: DateTime.now(),
+        ),
+      );
+      if (goal.isAchieved) {
+        _showSnackBar(context, '此帳目已同步至已達成的目標，無法刪除。');
+        return;
+      }
+    }
+
     final previousItems = List<LedgerItem>.from(_items);
     _removeLedgerItem(item.recordId!);
 
