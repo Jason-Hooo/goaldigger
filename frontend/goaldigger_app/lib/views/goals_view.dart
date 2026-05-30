@@ -380,6 +380,7 @@ class _GoalsPageState extends State<GoalsPage> {
 
     try {
       await _api.deleteGoal(goal.goalId!);
+      AppRefreshBus.notifyChanged();
       _showSnackBar(context, '已刪除 ${goal.title}');
     } catch (error) {
       if (!mounted) return;
@@ -874,7 +875,7 @@ class _GoalEditorSheetState extends State<_GoalEditorSheet> {
       text: widget.initialGoal?.targetAmount.toStringAsFixed(0) ?? '',
     );
     _savedAmountController = TextEditingController(
-      text: widget.initialGoal?.savedAmount.toStringAsFixed(0) ?? '',
+      text: widget.initialGoal?.savedAmount.toStringAsFixed(0) ?? '0',
     );
     _deadline =
         widget.initialGoal?.deadline ??
