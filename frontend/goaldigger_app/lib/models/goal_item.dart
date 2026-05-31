@@ -52,7 +52,13 @@ class GoalItem {
 
   String get savedAmountLabel => '\$${_formatMoney(savedAmount)}';
 
-  String get remainingAmountLabel => '\$${_formatMoney(remainingAmount)}';
+  String get remainingAmountLabel {
+  final remaining = targetAmount - savedAmount;
+  if (remaining <= 0) {
+    return '\$0'; // 只要變成負的，就永遠回傳 $0
+  }
+  return '\$${remaining.toStringAsFixed(0)}';
+}
 
   String get progressLabel => '${(progress * 100).toStringAsFixed(0)}%';
 

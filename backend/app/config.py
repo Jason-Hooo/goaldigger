@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).resolve().parents[2] / ".env",
+        env_file=Path(__file__).resolve().parents[1] / ".env",
         extra="ignore",
     )
 
