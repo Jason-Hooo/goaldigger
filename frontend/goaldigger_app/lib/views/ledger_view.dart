@@ -9,7 +9,8 @@ class LedgerPage extends StatefulWidget {
   State<LedgerPage> createState() => _LedgerPageState();
 }
 
-class _LedgerPageState extends State<LedgerPage> {
+class _LedgerPageState extends State<LedgerPage>
+    with RealtimeRefreshMixin<LedgerPage> {
   final ApiConnect _api = ApiConnect();
   List<LedgerItem> _items = [];
   List<ExpenseType> _expenseTypes = [];
@@ -34,6 +35,16 @@ class _LedgerPageState extends State<LedgerPage> {
     super.initState();
     _loadLedger();
     AppRefreshBus.tick.addListener(_onAppRefresh);
+    watchTables(
+      channelName: 'ledger-${widget.user.userId}',
+      tables: const [
+        'personal_consumptions',
+        'expense_types',
+        'group_consumptions',
+        'consumption_participants',
+      ],
+      onChange: () => _loadLedger(silent: true),
+    );
   }
 
   void _onAppRefresh() {
