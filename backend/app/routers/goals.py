@@ -48,7 +48,7 @@ def get_goal_detail(goal_id: int, conn=Depends(get_db_connection)):
 def achieve_goal(goal_id: int, conn=Depends(get_db_connection)):
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT goal_id, target_amount, cumulative_amount, deadline, status FROM goals WHERE goal_id = %s;", (goal_id,))
+        cursor.execute("SELECT goal_id, target_amount, cumulative_amount, deadline, status FROM goals WHERE goal_id = %s FOR UPDATE;", (goal_id,))
         goal = cursor.fetchone()
         if not goal:
             raise HTTPException(status_code=404, detail="目標不存在")
@@ -114,7 +114,7 @@ def update_goal(goal_id: int, payload: GoalUpdate, conn=Depends(get_db_connectio
     """更新目標內容或調整進度。"""
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM goals WHERE goal_id = %s;", (goal_id,))
+        cursor.execute("SELECT * FROM goals WHERE goal_id = %s FOR UPDATE;", (goal_id,))
         existing = cursor.fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="找不到該目標")
