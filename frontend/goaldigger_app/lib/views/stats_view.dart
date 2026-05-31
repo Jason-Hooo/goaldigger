@@ -72,7 +72,7 @@ class _StatsPageState extends State<StatsPage>
       }
 
       final monthlyData = _buildMonthlyData(_today, records, types);
-      final categoryData = _buildCategoryData(categoryStats);
+      final categoryData = _buildCategoryData(categoryStats, types);
       final recentTransactions = _buildRecentTransactions(records, types);
 
       setState(() {
@@ -218,7 +218,9 @@ class _StatsPageState extends State<StatsPage>
     }).toList();
   }
 
-  List<_CategoryData> _buildCategoryData(List<CategoryStat> stats) {
+  List<_CategoryData> _buildCategoryData(List<CategoryStat> stats, List<ExpenseType> types) {
+    final incomeTypeNames = types.where((t) => !t.isExpense).map((t) => t.name).toSet();
+
     final total = stats.fold<double>(0, (sum, item) => sum + item.amount);
     if (total <= 0) {
       return const [];
@@ -230,6 +232,7 @@ class _StatsPageState extends State<StatsPage>
             category: item.category,
             amount: item.amount,
             percentage: (item.amount / total).clamp(0.0, 1.0),
+            isIncome: incomeTypeNames.contains(item.category),
           ),
         )
         .toList();
@@ -353,7 +356,7 @@ class _CategoryBreakdownCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '支出分類',
+              '收入/支出分類',
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 16),
@@ -377,6 +380,10 @@ class _CategoryBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+
+    final barColor = data.isIncome ? AppColors.green : AppColors.pinkPrimary;
+    final bgColor = data.isIncome ? AppColors.green.withValues(alpha: 0.15) : AppColors.pinkSoft;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -395,8 +402,8 @@ class _CategoryBar extends StatelessWidget {
           borderRadius: BorderRadius.circular(4),
           child: LinearProgressIndicator(
             value: data.percentage,
-            backgroundColor: AppColors.pinkSoft,
-            valueColor: const AlwaysStoppedAnimation<Color>(AppColors.pinkPrimary),
+           backgroundColor: bgColor,
+           valueColor: AlwaysStoppedAnimation<Color>(barColor),
             minHeight: 8,
           ),
         ),
@@ -640,11 +647,13 @@ class _CategoryData {
     required this.category,
     required this.amount,
     required this.percentage,
+    required this.isIncome,
   });
 
   final String category;
   final double amount;
   final double percentage;
+  final bool isIncome;
 }
 
 class _TransactionData {
