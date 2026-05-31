@@ -1,34 +1,8 @@
 part of '../main.dart';
 
-class _MiniRow extends StatelessWidget {
-  const _MiniRow({required this.items});
 
-  final List<Widget> items;
 
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(spacing: 10, runSpacing: 10, children: items);
-  }
-}
-
-class _Pill extends StatelessWidget {
-  const _Pill({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.pinkSoft),
-      ),
-      child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-    );
-  }
-}
+ 
 
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader({required this.title});
