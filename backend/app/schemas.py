@@ -29,6 +29,7 @@ class GoalCreate(BaseModel):
     user_id: int = Field(..., description="誰的目標 (請先確保 users 表裡有這個人)")
     goal_name: str = Field(..., example="買一台 PS5")
     target_amount: float = Field(..., gt=0, example=15000.0, description="目標金額必須大於 0")
+    cumulative_amount: Optional[float] = Field(None, description="目前已存金額，允許負數")
     
     # Optional 代表選填 (前端不傳也沒關係，會自動變成 None)
     description: Optional[str] = None
@@ -128,5 +129,5 @@ class GoalUpdate(BaseModel):
     description: Optional[str] = None
     target_amount: Optional[float] = Field(None, gt=0)
     deadline: Optional[date] = None
-    cumulative_amount: Optional[float] = Field(None, ge=0)
+    cumulative_amount: Optional[float] = None
     status: Optional[str] = None

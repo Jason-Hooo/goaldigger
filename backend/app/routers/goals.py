@@ -15,13 +15,17 @@ router = APIRouter(prefix="/goals", tags=["目標管理"])
 def create_goal(goal: GoalCreate, conn=Depends(get_db_connection)): # 💡 改用 Depends
     cursor = conn.cursor()
     try:
+        # Default cumulative_amount to 0.0 if not provided
+        cumulative_amount = goal.cumulative_amount if goal.cumulative_amount is not None else 0.0
+        print(f"DEBUG: Inserting goal with cumulative_amount = {cumulative_amount}, type = {type(cumulative_amount)}")
         insert_query = """
-            INSERT INTO goals (user_id, goal_name, description, target_amount, deadline)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO goals (user_id, goal_name, description, target_amount, deadline, cumulative_amount)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING goal_id, user_id, goal_name, description, target_amount, cumulative_amount, deadline;
         """
-        cursor.execute(insert_query, (goal.user_id, goal.goal_name, goal.description, goal.target_amount, goal.deadline))
+        cursor.execute(insert_query, (goal.user_id, goal.goal_name, goal.description, goal.target_amount, goal.deadline, cumulative_amount))
         new_goal = cursor.fetchone()
+        print(f"DEBUG: Returned from database: {new_goal}")
         conn.commit()
         return new_goal
     except HTTPException:
