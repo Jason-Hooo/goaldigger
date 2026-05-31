@@ -991,17 +991,8 @@ class _GoalEditorSheetState extends State<_GoalEditorSheet> {
                   final savedAmount = double.tryParse(
                     (value ?? '').trim().replaceAll(',', ''),
                   );
-                  final targetAmount = double.tryParse(
-                    _targetAmountController.text.trim().replaceAll(',', ''),
-                  );
                   if (savedAmount == null) {
                     return '請輸入數字';
-                  }
-                  if (savedAmount < 0) {
-                    return '已存金額不能小於 0';
-                  }
-                  if (targetAmount != null && savedAmount > targetAmount) {
-                    return '已存金額不能大於目標金額';
                   }
                   return null;
                 },
@@ -1083,8 +1074,7 @@ class _GoalEditorSheetState extends State<_GoalEditorSheet> {
     if (title.isEmpty ||
         description.isEmpty ||
         targetAmount == null ||
-        targetAmount <= 0 ||
-        savedAmount < 0) {
+        targetAmount <= 0) {
       ScaffoldMessenger.of(context)
         ..clearSnackBars()
         ..showSnackBar(const SnackBar(content: Text('請輸入完整且正確的目標資料。')));
