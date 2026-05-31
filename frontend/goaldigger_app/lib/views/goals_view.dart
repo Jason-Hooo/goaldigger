@@ -21,21 +21,21 @@ class _GoalsPageState extends State<GoalsPage> {
   List<GoalItem> get _currentGoals =>
       _goals.where((goal) => !goal.isAchieved).toList();
 
-  double get _totalTarget =>
-      _goals.fold<double>(0, (sum, item) => sum + item.targetAmount);
+double get _totalTarget =>
+      _currentGoals.fold<double>(0, (sum, item) => sum + item.targetAmount);
 
   double get _totalSaved =>
-      _goals.fold<double>(0, (sum, item) => sum + item.savedAmount);
+      _currentGoals.fold<double>(0, (sum, item) => sum + item.savedAmount);
 
   double get _overallProgress {
-    if (_goals.isEmpty) {
-      return 0;
+    if (_currentGoals.isEmpty) {
+      return 0.0; // 避免沒有目標時除以零
     }
-    final totalProgress = _goals.fold<double>(
+    final totalProgress = _currentGoals.fold<double>(
       0,
       (sum, item) => sum + item.progress,
     );
-    return totalProgress / _goals.length;
+    return totalProgress / _currentGoals.length; // 👈 這裡除的數量也要是 current
   }
 
   @override
@@ -100,7 +100,7 @@ class _GoalsPageState extends State<GoalsPage> {
                 totalSaved: _totalSaved,
                 totalTarget: _totalTarget,
                 completionRate: _overallProgress,
-                goalCount: _goals.length,
+                goalCount: _currentGoals.length,
               ),
               const SizedBox(height: 20),
               _SectionHeader(title: '當前目標'),
@@ -482,18 +482,18 @@ class _GoalSummaryCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('目標總覽', style: Theme.of(context).textTheme.titleLarge),
+            Text('當前目標總覽', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 16),
             Row(
               children: [
                 _StatChip(
-                  label: '已存',
+                  label: '目前已存',
                   value: totalSaved,
                   color: AppColors.green,
                 ),
                 const SizedBox(width: 12),
                 _StatChip(
-                  label: '目標',
+                  label: '當前目標',
                   value: totalTarget,
                   color: AppColors.pinkPrimary,
                 ),
@@ -511,7 +511,7 @@ class _GoalSummaryCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '$goalCount 個目標・完成率 ${(completionRate * 100).toStringAsFixed(0)}%',
+              '目前有 $goalCount 個目標・完成率 ${(completionRate * 100).toStringAsFixed(0)}%',
               style: const TextStyle(color: AppColors.inkLight),
             ),
           ],
