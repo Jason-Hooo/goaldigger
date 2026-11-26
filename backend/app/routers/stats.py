@@ -1,7 +1,6 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 from ..database import get_db_connection
 from psycopg2.extras import RealDictCursor
-from typing import List
 
 router = APIRouter(prefix="/stats", tags=["統計分析"])
 

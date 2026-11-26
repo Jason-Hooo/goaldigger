@@ -1,7 +1,6 @@
 # 檔案：backend/app/main.py
 from fastapi import FastAPI
 from apscheduler.schedulers.background import BackgroundScheduler
-from pathlib import Path
 from .scheduler import allocate_daily_budget
 from .routers import goals, auth, ledger, stats, splits
 

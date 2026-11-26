@@ -3,7 +3,6 @@ from typing import List, Optional
 from ..database import get_db_connection
 from ..schemas import ExpenseTypeCreate, ExpenseTypeUpdate, LedgerCreate, LedgerResponse, LedgerUpdate
 from psycopg2.extras import RealDictCursor
-from datetime import datetime
 
 router = APIRouter(prefix="/ledger", tags=["核心記帳"])
 

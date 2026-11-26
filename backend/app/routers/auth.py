@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 import bcrypt # 💡 這裡改用直接匯入 bcrypt
-from ..schemas import UserCreate, UserLogin, UserResponse
+from ..schemas import UserCreate, UserLogin
 from ..database import get_db_connection
 from fastapi import Body
 
