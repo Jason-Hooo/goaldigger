@@ -253,17 +253,5 @@ class ButtonSpinner extends StatelessWidget {
   }
 }
 
-/// Text field decoration that formats a currency prefix consistently.
-InputDecoration amountDecoration({
-  String? labelText,
-  String? hintText,
-}) {
-  return InputDecoration(
-    labelText: labelText,
-    hintText: hintText,
-    prefixText: '\$',
-  );
-}
-
 /// `\$1,234` style label.
 String moneyLabel(double value) => '\$${Formatters.money(value)}';
