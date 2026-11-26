@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from apscheduler.schedulers.background import BackgroundScheduler
 from pathlib import Path
-from .scheduler import allocate_daily_budget, reward_daily_savings
+from .scheduler import allocate_daily_budget
 from .routers import goals, auth, ledger, stats, splits
 
 app = FastAPI(title="GoalDigger API")
@@ -34,9 +34,3 @@ def read_root():
         "status": "Running",
         "developer": "DBNS project Team"
     }
-    
-@app.get("/debug/trigger-reward", tags=["開發測試專用"])
-def debug_trigger_reward():
-    """手動觸發每日結算獎勵機制 (測試用)"""
-    reward_daily_savings()
-    return {"status": "success", "message": "獎勵結算函數已手動執行，請去資料庫檢查目標金額！"}
