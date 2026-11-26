@@ -204,7 +204,11 @@ class ApiConnect {
   String token = '';
 
   String get baseUrl {
-    return 'https://earthlike-bullfight-mutable.ngrok-free.dev';
+    final url = dotenv.env['API_BASE_URL']?.trim();
+    if (url == null || url.isEmpty) {
+      throw StateError('Missing API_BASE_URL in .env');
+    }
+    return url.replaceFirst(RegExp(r'/$'), '');
   }
 
   Map<String, String> get _jsonHeaders => const {

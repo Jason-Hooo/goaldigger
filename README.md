@@ -88,6 +88,11 @@ SUPABASE_ANON_KEY="your-supabase-anon-key"
 uvicorn app.main:app --reload
 ```
 
+To allow physical devices or the Android emulator on your network to connect, bind to all interfaces:
+```bash
+uvicorn app.main:app --reload --host 0.0.0.0
+```
+
 ### Frontend Setup
 
 1. Navigate to the frontend directory:
@@ -105,7 +110,17 @@ flutter pub get
 cp .env.example .env
 ```
 
-Edit `.env` with your Supabase credentials (same as backend).
+Edit `.env` with your Supabase URL / anon key and the backend address:
+```
+SUPABASE_URL="https://your-project.supabase.co"
+SUPABASE_ANON_KEY="your-supabase-anon-key"
+API_BASE_URL="http://localhost:8000"
+```
+
+`API_BASE_URL` depends on where the app runs:
+- iOS simulator / macOS / Web / Windows: `http://localhost:8000`
+- Android emulator: `http://10.0.2.2:8000`
+- Physical device (same Wi-Fi): `http://<your-computer-LAN-IP>:8000`
 
 4. Run the app:
 ```bash
