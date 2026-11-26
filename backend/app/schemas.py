@@ -1,7 +1,6 @@
 from pydantic import BaseModel, Field, EmailStr
-from typing import Optional
+from typing import List, Optional
 from datetime import date, datetime
-from typing import List, Dict
 
 class UserCreate(BaseModel):
     name: str = Field(..., example="王小明")
@@ -51,10 +50,6 @@ class GoalResponse(BaseModel):
     class Config:
         from_attributes = True  # 讓 Pydantic 可以順利讀取資料庫撈出來的資料
         
-class ExpenseSummary(BaseModel):
-    category: str
-    total_amount: float
-
 class LedgerCreate(BaseModel):
     user_id: int
     type_id: int

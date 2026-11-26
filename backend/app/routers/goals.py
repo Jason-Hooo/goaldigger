@@ -1,13 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List
 from ..database import get_db_connection
-from ..schemas import GoalCreate, GoalResponse, GoalUpdate
-from pydantic import BaseModel
+from ..schemas import GoalCreate, GoalResponse, GoalUpdate, GoalAchieveResponse
 from datetime import datetime
-
-class GoalAchieveResponse(BaseModel):
-    goal_id: int
-    completion_date: datetime
 
 router = APIRouter(prefix="/goals", tags=["目標管理"])
 
@@ -33,18 +28,6 @@ def create_goal(goal: GoalCreate, conn=Depends(get_db_connection)): # 💡 改�
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"新增目標失敗：{e}")
-    finally:
-        cursor.close()
-
-@router.get("/detail/{goal_id}", response_model=GoalResponse)
-def get_goal_detail(goal_id: int, conn=Depends(get_db_connection)):
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT * FROM goals WHERE goal_id = %s;", (goal_id,))
-        goal = cursor.fetchone()
-        if not goal:
-            raise HTTPException(status_code=404, detail="找不到該目標")
-        return goal
     finally:
         cursor.close()
 

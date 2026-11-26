@@ -3,7 +3,5 @@ uvicorn[standard]
 psycopg2-binary
 pydantic[email]
 pydantic-settings
-passlib[bcrypt]
+bcrypt
 email-validator
-firebase-admin
-apscheduler
