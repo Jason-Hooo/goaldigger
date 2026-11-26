@@ -6,4 +6,3 @@ pydantic-settings
 passlib[bcrypt]
 email-validator
 firebase-admin
-apscheduler
