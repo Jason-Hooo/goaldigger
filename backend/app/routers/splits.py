@@ -436,23 +436,22 @@ def settle_group_expenses(group_id: int, conn=Depends(get_db_connection)):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
         # Step 1: 透過關聯查詢，算出每個人的淨額 (Net Balance)
-        # 淨額 = (代墊的總額) - (自己該付的總額)
+        # 淨額 = (別人尚未還他的錢) - (他尚未還別人的錢)
         # 若 > 0，代表別人欠他錢；若 < 0，代表他欠別人錢
-        # 只考慮 status = 'pending' 的參與者
+        # 兩邊都只看 status = 'pending' 的非付款人，每一筆欠款同時記到
+        # 付款人 (UserPaid) 與欠款人 (UserOwed) 名下，因此淨額總和恆為 0
         sql_query = """
             WITH UserPaid AS (
-                SELECT cp.user_id, SUM(cp.shared_amount) as total_paid
+                SELECT payer.user_id, SUM(cp.shared_amount) as total_paid
                 FROM consumption_participants cp
                 JOIN group_consumptions gc ON cp.consumption_id = gc.consumption_id
+                JOIN consumption_participants payer
+                  ON payer.consumption_id = cp.consumption_id
+                 AND payer.is_payer = true
                 WHERE gc.group_id = %s
-                  AND cp.is_payer = true
-                  AND EXISTS (
-                      SELECT 1 FROM consumption_participants cp2
-                      WHERE cp2.consumption_id = cp.consumption_id
-                        AND cp2.status = 'pending'
-                        AND cp2.is_payer = false
-                  )
-                GROUP BY cp.user_id
+                  AND cp.is_payer = false
+                  AND cp.status = 'pending'
+                GROUP BY payer.user_id
             ),
             UserOwed AS (
                 SELECT cp.user_id, SUM(cp.shared_amount) as total_owed
